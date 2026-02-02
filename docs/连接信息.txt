@@ -1,0 +1,11 @@
+数据库类型 :MySQL
+
+主机 (Host/IP): 222.187.11.98
+
+端口 (Port): 33060 (注意不是默认的3306)
+
+数据库名 (Database): bmp153
+
+用户名 (User): bmp153
+
+密码 (Password): 45bSnyonIhPk3rsTOSLi
