@@ -22,7 +22,8 @@ from config import (
     API_PARAMS,
     REQUEST_DELAY,
     VERIFY_SSL,
-    RAW_DATA_DIR
+    RAW_DATA_DIR,
+    PROXIES
 )
 
 # 禁用安全警告
@@ -69,7 +70,8 @@ def run_scraper_sorted(max_pages: int = 3):
                 MAXIMO_API_URL, 
                 headers=headers, 
                 params=params, 
-                verify=VERIFY_SSL
+                verify=VERIFY_SSL,
+                proxies=PROXIES
             )
             
             if resp.status_code == 200:

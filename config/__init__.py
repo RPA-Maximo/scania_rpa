@@ -11,7 +11,8 @@ from .settings import (
     LOGS_DIR,
     FIELD_MAPPING,
     REQUEST_DELAY,
-    VERIFY_SSL
+    VERIFY_SSL,
+    PROXIES
 )
 
 __all__ = [
@@ -25,5 +26,6 @@ __all__ = [
     'LOGS_DIR',
     'FIELD_MAPPING',
     'REQUEST_DELAY',
-    'VERIFY_SSL'
+    'VERIFY_SSL',
+    'PROXIES'
 ]

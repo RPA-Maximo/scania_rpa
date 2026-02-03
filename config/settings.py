@@ -62,3 +62,14 @@ VERIFY_SSL = False
 
 # 最大重试次数
 MAX_RETRIES = 3
+
+# 代理配置
+PROXY_ENABLED = True
+PROXY_HOST = "127.0.0.1"
+PROXY_PORT = 10808
+
+# 代理字典（用于 requests）
+PROXIES = {
+    'http': f'socks5://{PROXY_HOST}:{PROXY_PORT}',
+    'https': f'socks5://{PROXY_HOST}:{PROXY_PORT}'
+} if PROXY_ENABLED else None
