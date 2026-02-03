@@ -21,4 +21,4 @@ data/logs/*.log
 data/excel/*.xlsx
 
 *.md
-
+*.txt

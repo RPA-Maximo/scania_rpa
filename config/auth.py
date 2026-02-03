@@ -1,9 +1,12 @@
 """
 认证信息管理模块
 从环境变量或 .env 文件中读取 Maximo API 认证信息
+支持从 响应标头.txt 中解析 curl 命令获取认证信息
 """
 import os
+import re
 from pathlib import Path
+from urllib.parse import unquote
 
 
 def load_env_file(env_path: str = None):
@@ -34,14 +37,70 @@ def load_env_file(env_path: str = None):
                     os.environ[key] = value
 
 
+def parse_curl_file(curl_file_path: str = None):
+    """
+    从 curl 命令文件中解析认证信息
+    
+    Args:
+        curl_file_path: curl 文件路径，默认为 config/响应标头.txt
+        
+    Returns:
+        dict: 包含 cookie, csrf_token, refresh_token 的字典，解析失败返回 None
+    """
+    if curl_file_path is None:
+        curl_file_path = Path(__file__).parent / "响应标头.txt"
+    
+    if not Path(curl_file_path).exists():
+        return None
+    
+    try:
+        with open(curl_file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # 提取 Cookie（-b 参数后的内容）
+        cookie_match = re.search(r"-b\s+'([^']+)'", content)
+        if not cookie_match:
+            cookie_match = re.search(r'-b\s+"([^"]+)"', content)
+        
+        cookie = cookie_match.group(1) if cookie_match else ''
+        
+        # 提取 CSRF Token（从 --data-raw 中的 csrftoken 参数）
+        csrf_match = re.search(r'csrftoken=([a-z0-9]+)', content)
+        csrf_token = csrf_match.group(1) if csrf_match else ''
+        
+        # 提取 Refresh Token（从 Cookie 中的 x-refresh-token）
+        refresh_match = re.search(r'x-refresh-token=([^;]+)', cookie)
+        refresh_token = refresh_match.group(1) if refresh_match else ''
+        
+        if cookie and csrf_token:
+            return {
+                'cookie': cookie,
+                'csrf_token': csrf_token,
+                'refresh_token': refresh_token
+            }
+        
+        return None
+        
+    except Exception as e:
+        print(f"解析 curl 文件失败: {e}")
+        return None
+
+
 def get_maximo_auth():
     """
     获取 Maximo API 认证信息
+    优先从 响应标头.txt 解析，失败则从 .env 读取
     
     Returns:
         dict: 包含 cookie, csrf_token, refresh_token 的字典
     """
-    # 先尝试加载 .env 文件
+    # 优先尝试从 响应标头.txt 解析
+    auth_info = parse_curl_file()
+    
+    if auth_info:
+        return auth_info
+    
+    # 回退到 .env 文件
     load_env_file()
     
     cookie = os.getenv('MAXIMO_COOKIE', '')
@@ -50,7 +109,7 @@ def get_maximo_auth():
     
     if not cookie or not csrf_token:
         raise ValueError(
-            "缺少认证信息！请在 config/.env 文件中设置 MAXIMO_COOKIE 和 MAXIMO_CSRF_TOKEN"
+            "缺少认证信息！请在 config/响应标头.txt 或 config/.env 文件中设置认证信息"
         )
     
     return {
