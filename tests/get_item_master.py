@@ -104,7 +104,10 @@ def scrape_item_master(
                     # 显示第一条数据的关键信息
                     if page == 1 and items:
                         first_item = items[0]
-                        print(f"   -> 第一条: {first_item.get('itemnum')} - {first_item.get('description')}")
+                        # 处理可能的命名空间前缀
+                        itemnum = first_item.get('itemnum') or first_item.get('spi:itemnum')
+                        desc = first_item.get('description') or first_item.get('spi:description')
+                        print(f"   -> 第一条: {itemnum} - {desc}")
                     
                     all_data.extend(items)
                 else:
@@ -230,14 +233,20 @@ def scrape_by_item_list(item_numbers: list):
 
 
 if __name__ == "__main__":
-    # 示例1: 抓取前3页的 ACTIVE 状态物料
+    # 抓取物料数据: 排除 OBSOLETE 状态，物料编号 >= 00050102
     print("="*60)
-    print("示例1: 抓取 ACTIVE 状态的物料")
+    print("抓取物料主数据")
     print("="*60)
+    print("筛选条件:")
+    print("  - 状态: 不等于 OBSOLETE")
+    print("  - 物料编号: >= 00050102")
+    print("  - 排序: 按物料编号升序")
+    print("="*60)
+    
     scrape_item_master(
-        max_pages=3,
+        max_pages=5,
         page_size=20,
-        where_clause='status="ACTIVE"',
+        where_clause='status!="OBSOLETE" and itemnum>="00050102"',
         order_by='+itemnum'
     )
     
@@ -245,5 +254,5 @@ if __name__ == "__main__":
     # print("\n" + "="*60)
     # print("示例2: 根据物料编号列表抓取")
     # print("="*60)
-    # item_list = ['00006928', '00006929', '00006930']
+    # item_list = ['00050421', '00050422', '00050423']
     # scrape_by_item_list(item_list)
