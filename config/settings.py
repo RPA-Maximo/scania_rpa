@@ -66,7 +66,7 @@ MAX_RETRIES = 3
 # 代理配置
 PROXY_ENABLED = True
 PROXY_HOST = "127.0.0.1"
-PROXY_PORT = 10808
+PROXY_PORT = 10820
 
 # 代理字典（用于 requests）
 PROXIES = {
