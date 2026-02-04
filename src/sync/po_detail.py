@@ -14,14 +14,41 @@ from src.utils.db import generate_id
 from src.utils.mapper import PO_LINE_MAPPING
 
 
-def map_line_data(line_data: Dict, form_id: int, material_id: int) -> Dict:
+def get_warehouse_id(cursor, warehouse_code: str) -> int:
+    """
+    根据仓库代码查询仓库ID
+    
+    Args:
+        cursor: 数据库游标
+        warehouse_code: 仓库代码（如 "518", "513A"）
+        
+    Returns:
+        int: 仓库ID，未找到返回 None
+    """
+    if not warehouse_code:
+        return None
+    
+    try:
+        cursor.execute(
+            "SELECT id FROM warehouse WHERE code = %s AND del_flag = 0",
+            (warehouse_code,)
+        )
+        result = cursor.fetchone()
+        return result[0] if result else None
+    except Exception as e:
+        print(f"  [WARN] 查询仓库信息失败 (code={warehouse_code}): {e}")
+        return None
+
+
+def map_line_data(line_data: Dict, form_id: int, material_id: int = None, warehouse_id: int = None) -> Dict:
     """
     将订单明细 JSON 映射到数据库字段
     
     Args:
         line_data: 明细行 JSON 数据
         form_id: 订单头ID
-        material_id: 物料ID
+        material_id: 物料ID（可选，对于非标准物料可以为 None）
+        warehouse_id: 仓库ID（可选）
         
     Returns:
         dict: 映射后的数据库字段
@@ -29,7 +56,8 @@ def map_line_data(line_data: Dict, form_id: int, material_id: int) -> Dict:
     result = {
         'id': generate_id(),
         'form_id': form_id,
-        'sku': material_id,  # 从 material 表查询得到的 ID
+        'sku': material_id,  # 可以为 None（非标准物料）
+        'warehouse': warehouse_id,  # 仓库ID
         'create_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'del_flag': 0,
     }
@@ -44,7 +72,7 @@ def map_line_data(line_data: Dict, form_id: int, material_id: int) -> Dict:
         # 数值转字符串或保留原值
         if db_field == 'qty':
             value = int(value) if value else 0
-        elif isinstance(value, (int, float)) and db_field not in ['id', 'form_id', 'sku']:
+        elif isinstance(value, (int, float)) and db_field not in ['id', 'form_id', 'sku', 'warehouse']:
             value = str(value)
         
         result[db_field] = value
@@ -57,7 +85,7 @@ def insert_po_lines(
     lines: List[Dict], 
     form_id: int, 
     material_map: Dict[str, int]
-) -> int:
+) -> Dict:
     """
     插入订单明细
     
@@ -68,19 +96,58 @@ def insert_po_lines(
         material_map: 物料映射表 {物料编号: 物料ID}
         
     Returns:
-        int: 成功插入的数量
+        dict: 统计信息
     """
-    inserted_count = 0
+    stats = {
+        'inserted': 0,
+        'inserted_no_sku': 0,      # 插入成功（无物料编号）
+        'skipped_service': 0,      # 跳过：服务类
+        'skipped_not_found': 0,    # 跳过：物料未找到
+        'failed': 0                # 失败：插入错误
+    }
+    
+    # 缓存仓库ID查询结果
+    warehouse_cache = {}
     
     for line in lines:
         item_code = line.get('itemnum')
-        material_id = material_map.get(item_code)
+        line_type = line.get('linetype', 'UNKNOWN')
         
-        if not material_id:
-            print(f"    [WARN] 跳过物料 {item_code}（找不到ID）")
+        # 服务类订单行：跳过（不插入到明细表）
+        if line_type in ['SERVICE', 'STDSERVICE']:
+            stats['skipped_service'] += 1
             continue
         
-        line_data = map_line_data(line, form_id, material_id)
+        # 物料类订单行
+        if item_code:
+            # 有物料编号：查找物料ID
+            material_id = material_map.get(item_code)
+            
+            if not material_id:
+                print(f"    [WARN] 跳过物料 {item_code}（在 material 表中找不到ID）")
+                stats['skipped_not_found'] += 1
+                continue
+        else:
+            # 无物料编号：非标准物料，允许 sku 为 NULL
+            material_id = None
+        
+        # 查询仓库ID
+        warehouse_code = line.get('storeloc')
+        warehouse_id = None
+        
+        if warehouse_code:
+            # 使用缓存避免重复查询
+            if warehouse_code in warehouse_cache:
+                warehouse_id = warehouse_cache[warehouse_code]
+            else:
+                warehouse_id = get_warehouse_id(cursor, warehouse_code)
+                warehouse_cache[warehouse_code] = warehouse_id
+                
+                if not warehouse_id:
+                    print(f"    [WARN] 仓库 {warehouse_code} 在 warehouse 表中找不到ID")
+        
+        # 映射并插入数据
+        line_data = map_line_data(line, form_id, material_id, warehouse_id)
         
         columns = ', '.join(line_data.keys())
         placeholders = ', '.join(['%s'] * len(line_data))
@@ -88,11 +155,16 @@ def insert_po_lines(
         
         try:
             cursor.execute(insert_sql, list(line_data.values()))
-            inserted_count += 1
+            if material_id:
+                stats['inserted'] += 1
+            else:
+                stats['inserted_no_sku'] += 1
         except Exception as e:
-            print(f"    [ERROR] 插入明细失败: {e}")
+            desc = line.get('description', 'N/A')[:30]
+            print(f"    [ERROR] 插入明细失败 ({desc}...): {e}")
+            stats['failed'] += 1
     
-    return inserted_count
+    return stats
 
 
 def batch_insert_details(
@@ -117,7 +189,14 @@ def batch_insert_details(
     print("步骤 3: 插入订单明细")
     print("="*60)
     
-    stats = {'total_lines': 0, 'inserted': 0, 'failed': 0}
+    total_stats = {
+        'total_lines': 0,
+        'inserted': 0,
+        'inserted_no_sku': 0,
+        'skipped_service': 0,
+        'skipped_not_found': 0,
+        'failed': 0
+    }
     
     for po_data in po_list:
         po_code = po_data.get('ponum')
@@ -132,18 +211,39 @@ def batch_insert_details(
             print(f"  ⊙ {po_code}: 无明细行")
             continue
         
-        stats['total_lines'] += len(poline)
+        total_stats['total_lines'] += len(poline)
         
         # 插入明细
-        inserted = insert_po_lines(cursor, poline, form_id, material_map)
-        stats['inserted'] += inserted
-        stats['failed'] += len(poline) - inserted
+        line_stats = insert_po_lines(cursor, poline, form_id, material_map)
         
-        print(f"  ✓ {po_code}: {inserted}/{len(poline)} 行")
+        # 累加统计
+        for key in line_stats:
+            total_stats[key] += line_stats[key]
+        
+        # 显示结果
+        total_inserted = line_stats['inserted'] + line_stats['inserted_no_sku']
+        msg = f"  ✓ {po_code}: {total_inserted}/{len(poline)} 行"
+        
+        details = []
+        if line_stats['inserted_no_sku'] > 0:
+            details.append(f"{line_stats['inserted_no_sku']} 非标准物料")
+        if line_stats['skipped_service'] > 0:
+            details.append(f"{line_stats['skipped_service']} 服务类")
+        
+        if details:
+            msg += f" ({', '.join(details)})"
+        
+        print(msg)
     
     print(f"\n[INFO] 订单明细处理完成:")
-    print(f"  总行数: {stats['total_lines']}")
-    print(f"  成功: {stats['inserted']}")
-    print(f"  失败: {stats['failed']}")
+    print(f"  总行数: {total_stats['total_lines']}")
+    print(f"  成功插入: {total_stats['inserted']} (标准物料)")
+    if total_stats['inserted_no_sku'] > 0:
+        print(f"  成功插入: {total_stats['inserted_no_sku']} (非标准物料)")
+    print(f"  跳过（服务类）: {total_stats['skipped_service']}")
+    if total_stats['skipped_not_found'] > 0:
+        print(f"  跳过（物料未找到）: {total_stats['skipped_not_found']}")
+    if total_stats['failed'] > 0:
+        print(f"  失败: {total_stats['failed']}")
     
-    return stats
+    return total_stats

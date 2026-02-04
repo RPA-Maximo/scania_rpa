@@ -1,6 +1,8 @@
 """
 采购订单数据入库脚本
 将从 Maximo API 抓取的 JSON 数据保存到 MySQL 数据库
+
+注意：此脚本已更新为使用 src.sync.po_header 模块中的标准函数
 """
 import sys
 from pathlib import Path
@@ -12,24 +14,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import mysql.connector
 from config.auth import get_db_config
+from src.sync.po_header import map_header_data, check_po_exists
+from src.utils.db import generate_id, format_datetime
 
-
-# JSON 字段 -> 数据库字段映射 (订单头)
-PO_HEADER_MAPPING = {
-    'ponum': 'code',
-    'description': 'description',
-    'purchaseagent': 'user_code',
-    'siteid': 'location',
-    'status': 'status',
-    'vendor': 'supplier_name',
-    'statusdate': 'status_date',
-    'orderdate': 'order_date',
-    'totalcost': 'total_cost',
-    'currencycode': 'currency',
-    'revisionnum': 'revision',
-    'potype': 'type',
-    'requireddate': 'request_date',
-}
 
 # JSON 字段 -> 数据库字段映射 (订单明细)
 PO_LINE_MAPPING = {
@@ -42,51 +29,6 @@ PO_LINE_MAPPING = {
     'linecost': 'line_cost',
     # 'itemnum' 需要通过查询 material 表获取 id，映射到 'sku'
 }
-
-
-def generate_id() -> int:
-    """生成雪花 ID (简化版: 时间戳 + 随机数)"""
-    import random
-    timestamp = int(datetime.now().timestamp() * 1000)
-    return timestamp * 1000 + random.randint(0, 999)
-
-
-def format_datetime(dt_str: str) -> str:
-    """格式化日期时间字符串"""
-    if not dt_str:
-        return None
-    # 处理 ISO 格式: 2025-12-25T07:33:49+00:00
-    try:
-        if 'T' in dt_str:
-            dt = datetime.fromisoformat(dt_str.replace('+00:00', '+0000').replace('Z', '+0000'))
-            return dt.strftime('%Y-%m-%d %H:%M:%S')
-        return dt_str
-    except:
-        return dt_str
-
-
-def map_header_data(po_data: Dict) -> Dict:
-    """将 JSON 数据映射到数据库字段"""
-    result = {
-        'id': generate_id(),
-        'create_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'del_flag': 0,
-    }
-    
-    for json_field, db_field in PO_HEADER_MAPPING.items():
-        value = po_data.get(json_field)
-        
-        # 日期时间格式化
-        if 'date' in json_field.lower() and value:
-            value = format_datetime(value)
-        
-        # 数值转字符串 (数据库字段是 varchar)
-        if isinstance(value, (int, float)) and db_field not in ['id']:
-            value = str(value)
-        
-        result[db_field] = value
-    
-    return result
 
 
 def map_line_data(line_data: Dict, form_id: int, material_id: int) -> Dict:
@@ -115,16 +57,6 @@ def map_line_data(line_data: Dict, form_id: int, material_id: int) -> Dict:
         result[db_field] = value
     
     return result
-
-
-def check_po_exists(cursor, po_code: str) -> int:
-    """检查订单是否已存在，返回 ID 或 None"""
-    cursor.execute(
-        "SELECT id FROM purchase_order WHERE code = %s AND del_flag = 0",
-        (po_code,)
-    )
-    result = cursor.fetchone()
-    return result[0] if result else None
 
 
 def batch_get_material_ids(cursor, item_codes: List[str]) -> Dict[str, int]:
@@ -222,8 +154,8 @@ def save_po_to_db(po_data: Dict, update_if_exists: bool = False) -> bool:
             
             print(f"[OK] 所有物料验证通过")
         
-        # 2. 映射主表数据
-        header_data = map_header_data(po_data)
+        # 2. 映射主表数据（需要传入 cursor）
+        header_data = map_header_data(cursor, po_data)
         header_id = header_data['id']
         
         # 3. 插入主表

@@ -28,7 +28,8 @@ CONFIG = {
     
     # 数据同步选项
     'auto_sync_materials': True,    # 自动同步缺失物料
-    'update_existing_po': False,    # 更新已存在的订单
+    'update_existing_po': True,     # 更新已存在的订单（默认开启全量更新）
+    'check_before_sync': True,      # 同步前检查数据库状态并询问
     
     # 文件模式选项
     'data_directory': None,         # 数据目录，None 表示使用默认 data/raw
@@ -41,6 +42,96 @@ def print_banner():
     print("\n" + "="*60)
     print(" "*15 + "采购订单同步系统")
     print("="*60)
+
+
+def check_database_status(cursor) -> dict:
+    """
+    检查数据库当前状态
+    
+    Args:
+        cursor: 数据库游标
+        
+    Returns:
+        dict: 包含订单数、明细数等统计信息
+    """
+    stats = {}
+    
+    # 检查订单头数量
+    cursor.execute("SELECT COUNT(*) FROM purchase_order WHERE del_flag = 0")
+    stats['po_count'] = cursor.fetchone()[0]
+    
+    # 检查订单明细数量
+    cursor.execute("SELECT COUNT(*) FROM purchase_order_bd")
+    stats['detail_count'] = cursor.fetchone()[0]
+    
+    # 检查有仓库信息的明细数量
+    cursor.execute("SELECT COUNT(*) FROM purchase_order_bd WHERE warehouse IS NOT NULL")
+    stats['detail_with_warehouse'] = cursor.fetchone()[0]
+    
+    # 检查无仓库信息的明细数量
+    stats['detail_without_warehouse'] = stats['detail_count'] - stats['detail_with_warehouse']
+    
+    return stats
+
+
+def ask_clear_tables(stats: dict) -> bool:
+    """
+    询问用户是否清空相关表
+    
+    Args:
+        stats: 数据库状态统计
+        
+    Returns:
+        bool: True=清空, False=保留
+    """
+    print("\n" + "="*60)
+    print("数据库当前状态")
+    print("="*60)
+    print(f"采购订单数: {stats['po_count']}")
+    print(f"订单明细数: {stats['detail_count']}")
+    print(f"  - 有仓库信息: {stats['detail_with_warehouse']}")
+    print(f"  - 无仓库信息: {stats['detail_without_warehouse']}")
+    print("="*60)
+    
+    if stats['po_count'] == 0 and stats['detail_count'] == 0:
+        print("[INFO] 数据库为空，无需清空")
+        return False
+    
+    print("\n[提示] 检测到数据库中已有采购订单数据")
+    print("[提示] 当前配置为全量更新模式 (update_existing_po=True)")
+    print("[提示] 重新导入会删除旧订单和明细，然后插入最新数据")
+    
+    while True:
+        choice = input("\n是否清空 purchase_order 和 purchase_order_bd 表? (y/n): ").strip().lower()
+        if choice in ['y', 'yes']:
+            return True
+        elif choice in ['n', 'no']:
+            print("[INFO] 保留现有数据，将跳过已存在的订单")
+            return False
+        else:
+            print("[ERROR] 请输入 y 或 n")
+
+
+def clear_po_tables(cursor):
+    """
+    清空采购订单相关表
+    
+    Args:
+        cursor: 数据库游标
+    """
+    print("\n[INFO] 正在清空采购订单表...")
+    
+    # 清空明细表
+    cursor.execute("DELETE FROM purchase_order_bd")
+    detail_count = cursor.rowcount
+    print(f"  ✓ 清空 purchase_order_bd: {detail_count} 行")
+    
+    # 清空主表
+    cursor.execute("DELETE FROM purchase_order")
+    po_count = cursor.rowcount
+    print(f"  ✓ 清空 purchase_order: {po_count} 行")
+    
+    print("[OK] 表清空完成")
 
 
 def print_summary(po_list, material_map, header_map, detail_stats, elapsed_time):
@@ -102,6 +193,20 @@ def main():
     try:
         conn = get_connection()
         cursor = conn.cursor()
+        
+        # 检查数据库状态并询问是否清空
+        if CONFIG['check_before_sync']:
+            stats = check_database_status(cursor)
+            should_clear = ask_clear_tables(stats)
+            
+            if should_clear:
+                clear_po_tables(cursor)
+                conn.commit()
+                # 清空后强制使用插入模式
+                CONFIG['update_existing_po'] = False
+            else:
+                # 保留数据，使用更新模式
+                CONFIG['update_existing_po'] = True
         
         # 步骤 1: 物料验证和同步
         material_map = validate_and_sync_materials(

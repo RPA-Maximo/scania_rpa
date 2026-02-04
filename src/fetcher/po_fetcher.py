@@ -31,6 +31,39 @@ PO_API_URL = f"{MAXIMO_BASE_URL}/oslc/os/MXAPIPO"
 REQUEST_TIMEOUT = 120
 
 
+def normalize_po_data(po_data: dict) -> dict:
+    """
+    标准化采购订单数据，移除命名空间前缀
+    
+    Args:
+        po_data: 原始采购订单数据
+    
+    Returns:
+        dict: 标准化后的数据（移除 spi: 等前缀）
+    """
+    normalized = {}
+    
+    for key, value in po_data.items():
+        # 移除命名空间前缀 (spi:, rdfs: 等)
+        if ':' in key:
+            clean_key = key.split(':', 1)[1]
+        else:
+            clean_key = key
+        
+        # 递归处理嵌套的列表和字典
+        if isinstance(value, dict):
+            normalized[clean_key] = normalize_po_data(value)
+        elif isinstance(value, list):
+            normalized[clean_key] = [
+                normalize_po_data(item) if isinstance(item, dict) else item
+                for item in value
+            ]
+        else:
+            normalized[clean_key] = value
+    
+    return normalized
+
+
 def fetch_po_by_number(po_number: str, save_to_file: bool = True) -> Optional[dict]:
     """
     根据采购订单号查询单个订单
@@ -79,6 +112,10 @@ def fetch_po_by_number(po_number: str, save_to_file: bool = True) -> Optional[di
             
             if items:
                 po = items[0]
+                
+                # 标准化数据（移除命名空间前缀）
+                po = normalize_po_data(po)
+                
                 elapsed = time.time() - start_time
                 
                 # 保存到 JSON
@@ -192,6 +229,9 @@ def fetch_po_list(
                     items = data.get('member') or data.get('rdfs:member')
                     
                     if items:
+                        # 标准化所有订单数据
+                        items = [normalize_po_data(item) for item in items]
+                        
                         print(f"✓ {len(items)} 条")
                         all_data.extend(items)
                         
