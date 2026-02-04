@@ -5,7 +5,7 @@ Maximo 采购订单爬虫
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import requests
@@ -280,15 +280,3 @@ if __name__ == "__main__":
     
     # 使用截图中看到的订单号
     get_po_by_number("CN5123")
-    
-    # 示例2: 批量查询指定订单
-    # print("\n" + "="*60)
-    # print("示例: 批量查询指定订单")
-    # print("="*60)
-    # scrape_po_list(po_numbers=['CN5123', 'CN4730', 'CN4731'])
-    
-    # 示例3: 按状态筛选
-    # print("\n" + "="*60)
-    # print("示例: 查询所有 APPR 状态的订单")
-    # print("="*60)
-    # scrape_po_list(status_filter='APPR', max_pages=1, page_size=10)
