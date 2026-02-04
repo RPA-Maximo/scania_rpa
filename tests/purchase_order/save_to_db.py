@@ -34,13 +34,13 @@ PO_HEADER_MAPPING = {
 # JSON 字段 -> 数据库字段映射 (订单明细)
 PO_LINE_MAPPING = {
     'polinenum': 'number',
-    'itemnum': 'sku_name',
-    'description': 'description',
+    'description': 'sku_names',  # 物料名称描述
     'orderqty': 'qty',
     'receiptscomplete': 'receive_status',
     'orderunit': 'ordering_unit',
     'unitcost': 'unit_cost',
     'linecost': 'line_cost',
+    # 'itemnum' 需要通过查询 material 表获取 id，映射到 'sku'
 }
 
 
@@ -89,11 +89,12 @@ def map_header_data(po_data: Dict) -> Dict:
     return result
 
 
-def map_line_data(line_data: Dict, form_id: int) -> Dict:
+def map_line_data(line_data: Dict, form_id: int, material_id: int) -> Dict:
     """将订单明细 JSON 映射到数据库字段"""
     result = {
         'id': generate_id(),
         'form_id': form_id,
+        'sku': material_id,  # 从 material 表查询得到的 ID
         'create_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'del_flag': 0,
     }
@@ -108,7 +109,7 @@ def map_line_data(line_data: Dict, form_id: int) -> Dict:
         # 数值转字符串或保留原值
         if db_field == 'qty':
             value = int(value) if value else 0
-        elif isinstance(value, (int, float)) and db_field not in ['id', 'form_id']:
+        elif isinstance(value, (int, float)) and db_field not in ['id', 'form_id', 'sku']:
             value = str(value)
         
         result[db_field] = value
@@ -124,6 +125,31 @@ def check_po_exists(cursor, po_code: str) -> int:
     )
     result = cursor.fetchone()
     return result[0] if result else None
+
+
+def batch_get_material_ids(cursor, item_codes: List[str]) -> Dict[str, int]:
+    """
+    批量查询物料ID
+    
+    Args:
+        cursor: 数据库游标
+        item_codes: 物料编号列表
+    
+    Returns:
+        Dict[物料编号, 物料ID]
+    """
+    if not item_codes:
+        return {}
+    
+    # 使用 IN 查询批量获取
+    placeholders = ', '.join(['%s'] * len(item_codes))
+    sql = f"SELECT code, id FROM material WHERE code IN ({placeholders}) AND del_flag = 0"
+    
+    cursor.execute(sql, item_codes)
+    results = cursor.fetchall()
+    
+    # 构建映射字典
+    return {code: material_id for code, material_id in results}
 
 
 def save_po_to_db(po_data: Dict, update_if_exists: bool = False) -> bool:
@@ -172,11 +198,35 @@ def save_po_to_db(po_data: Dict, update_if_exists: bool = False) -> bool:
                 print(f"[SKIP] 订单 {po_code} 已存在 (ID: {existing_id})，跳过")
                 return True
         
-        # 映射主表数据
+        # 获取所有明细行
+        poline = po_data.get('poline', [])
+        if not poline:
+            print("[WARN] 订单没有明细行")
+        
+        # 1. 批量验证物料是否存在
+        item_codes = [line.get('itemnum') for line in poline if line.get('itemnum')]
+        
+        if item_codes:
+            print(f"[INFO] 验证 {len(item_codes)} 个物料...")
+            material_id_map = batch_get_material_ids(cursor, item_codes)
+            
+            # 检查是否有物料找不到
+            missing_items = [code for code in item_codes if code not in material_id_map]
+            
+            if missing_items:
+                print(f"[FAIL] 以下物料在 material 表中找不到:")
+                for item_code in missing_items:
+                    print(f"  - {item_code}")
+                print(f"[FAIL] 订单 {po_code} 导入失败，整批数据不插入")
+                return False
+            
+            print(f"[OK] 所有物料验证通过")
+        
+        # 2. 映射主表数据
         header_data = map_header_data(po_data)
         header_id = header_data['id']
         
-        # 构建 INSERT 语句
+        # 3. 插入主表
         columns = ', '.join(header_data.keys())
         placeholders = ', '.join(['%s'] * len(header_data))
         insert_sql = f"INSERT INTO purchase_order ({columns}) VALUES ({placeholders})"
@@ -184,12 +234,19 @@ def save_po_to_db(po_data: Dict, update_if_exists: bool = False) -> bool:
         cursor.execute(insert_sql, list(header_data.values()))
         print(f"[OK] 主表插入成功 (ID: {header_id})")
         
-        # 插入明细
-        poline = po_data.get('poline', [])
+        # 4. 插入明细
         if poline:
             inserted_count = 0
             for line in poline:
-                line_data = map_line_data(line, header_id)
+                item_code = line.get('itemnum')
+                material_id = material_id_map.get(item_code)
+                
+                if not material_id:
+                    # 理论上不会到这里，因为前面已经验证过
+                    print(f"[WARN] 跳过物料 {item_code}（找不到ID）")
+                    continue
+                
+                line_data = map_line_data(line, header_id, material_id)
                 
                 columns = ', '.join(line_data.keys())
                 placeholders = ', '.join(['%s'] * len(line_data))
