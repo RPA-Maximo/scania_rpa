@@ -1,0 +1,164 @@
+"""
+采购订单表头同步模块
+负责 purchase_order 主表的数据同步
+"""
+import sys
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Optional
+
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.utils.db import generate_id, format_datetime
+from src.utils.mapper import PO_HEADER_MAPPING
+
+
+def map_header_data(po_data: Dict) -> Dict:
+    """
+    将 JSON 数据映射到数据库字段
+    
+    Args:
+        po_data: 采购订单 JSON 数据
+        
+    Returns:
+        dict: 映射后的数据库字段
+    """
+    result = {
+        'id': generate_id(),
+        'create_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'del_flag': 0,
+    }
+    
+    for json_field, db_field in PO_HEADER_MAPPING.items():
+        value = po_data.get(json_field)
+        
+        # 日期时间格式化
+        if 'date' in json_field.lower() and value:
+            value = format_datetime(value)
+        
+        # 数值转字符串 (数据库字段是 varchar)
+        if isinstance(value, (int, float)) and db_field not in ['id']:
+            value = str(value)
+        
+        result[db_field] = value
+    
+    return result
+
+
+def check_po_exists(cursor, po_code: str) -> Optional[int]:
+    """
+    检查订单是否已存在
+    
+    Args:
+        cursor: 数据库游标
+        po_code: 订单号
+        
+    Returns:
+        int: 订单ID，不存在返回 None
+    """
+    cursor.execute(
+        "SELECT id FROM purchase_order WHERE code = %s AND del_flag = 0",
+        (po_code,)
+    )
+    result = cursor.fetchone()
+    return result[0] if result else None
+
+
+def delete_existing_po(cursor, po_id: int):
+    """
+    删除已存在的订单（包括明细）
+    
+    Args:
+        cursor: 数据库游标
+        po_id: 订单ID
+    """
+    # 删除明细
+    cursor.execute("DELETE FROM purchase_order_bd WHERE form_id = %s", (po_id,))
+    # 删除主表
+    cursor.execute("DELETE FROM purchase_order WHERE id = %s", (po_id,))
+
+
+def insert_po_header(cursor, header_data: Dict) -> int:
+    """
+    插入订单头
+    
+    Args:
+        cursor: 数据库游标
+        header_data: 订单头数据
+        
+    Returns:
+        int: 插入的订单ID
+    """
+    columns = ', '.join(header_data.keys())
+    placeholders = ', '.join(['%s'] * len(header_data))
+    insert_sql = f"INSERT INTO purchase_order ({columns}) VALUES ({placeholders})"
+    
+    cursor.execute(insert_sql, list(header_data.values()))
+    return header_data['id']
+
+
+def batch_insert_headers(
+    cursor, 
+    po_list: List[Dict], 
+    update_existing: bool = False
+) -> Dict[str, int]:
+    """
+    批量插入订单头
+    
+    Args:
+        cursor: 数据库游标
+        po_list: 采购订单列表
+        update_existing: 是否更新已存在的订单
+        
+    Returns:
+        dict: {订单号: 订单ID} 映射表
+    """
+    print("\n" + "="*60)
+    print("步骤 2: 插入订单头")
+    print("="*60)
+    
+    header_map = {}
+    stats = {'inserted': 0, 'updated': 0, 'skipped': 0, 'failed': 0}
+    
+    for po_data in po_list:
+        po_code = po_data.get('ponum')
+        if not po_code:
+            print(f"  ✗ 跳过: 缺少 ponum")
+            stats['failed'] += 1
+            continue
+        
+        try:
+            # 检查是否已存在
+            existing_id = check_po_exists(cursor, po_code)
+            
+            if existing_id:
+                if update_existing:
+                    delete_existing_po(cursor, existing_id)
+                    header_data = map_header_data(po_data)
+                    header_id = insert_po_header(cursor, header_data)
+                    header_map[po_code] = header_id
+                    stats['updated'] += 1
+                    print(f"  ↻ {po_code} (更新)")
+                else:
+                    header_map[po_code] = existing_id
+                    stats['skipped'] += 1
+                    print(f"  ⊙ {po_code} (已存在)")
+            else:
+                header_data = map_header_data(po_data)
+                header_id = insert_po_header(cursor, header_data)
+                header_map[po_code] = header_id
+                stats['inserted'] += 1
+                print(f"  ✓ {po_code}")
+                
+        except Exception as e:
+            print(f"  ✗ {po_code}: {e}")
+            stats['failed'] += 1
+    
+    print(f"\n[INFO] 订单头处理完成:")
+    print(f"  新增: {stats['inserted']}")
+    print(f"  更新: {stats['updated']}")
+    print(f"  跳过: {stats['skipped']}")
+    print(f"  失败: {stats['failed']}")
+    
+    return header_map
