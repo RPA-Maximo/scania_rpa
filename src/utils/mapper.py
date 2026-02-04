@@ -10,7 +10,7 @@ PO_HEADER_MAPPING = {
     'purchaseagent': 'user_code',
     'siteid': 'location',
     'status': 'status',
-    'vendor': 'supplier_name',
+    # 'vendor' 字段需要通过查询 sys_department 表获取 owner_dept_id 和 supplier_name
     'statusdate': 'status_date',
     'orderdate': 'order_date',
     'totalcost': 'total_cost',

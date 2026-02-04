@@ -5,7 +5,7 @@
 import sys
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -14,11 +14,40 @@ from src.utils.db import generate_id, format_datetime
 from src.utils.mapper import PO_HEADER_MAPPING
 
 
-def map_header_data(po_data: Dict) -> Dict:
+def get_supplier_info(cursor, vendor_code: str) -> Tuple[Optional[int], Optional[str]]:
+    """
+    根据供应商代码查询供应商信息
+    
+    Args:
+        cursor: 数据库游标
+        vendor_code: 供应商代码 (JSON中的vendor字段)
+        
+    Returns:
+        tuple: (supplier_id, supplier_name) 如果未找到返回 (None, None)
+    """
+    if not vendor_code:
+        return None, None
+    
+    try:
+        cursor.execute(
+            "SELECT id, name FROM sys_department WHERE code = %s AND del_flag = 0",
+            (vendor_code,)
+        )
+        result = cursor.fetchone()
+        if result:
+            return result[0], result[1]  # (id, name)
+        return None, None
+    except Exception as e:
+        print(f"  [WARN] 查询供应商信息失败 (code={vendor_code}): {e}")
+        return None, None
+
+
+def map_header_data(cursor, po_data: Dict) -> Dict:
     """
     将 JSON 数据映射到数据库字段
     
     Args:
+        cursor: 数据库游标
         po_data: 采购订单 JSON 数据
         
     Returns:
@@ -30,7 +59,12 @@ def map_header_data(po_data: Dict) -> Dict:
         'del_flag': 0,
     }
     
+    # 基础字段映射
     for json_field, db_field in PO_HEADER_MAPPING.items():
+        # 跳过 vendor 字段，后面单独处理
+        if json_field == 'vendor':
+            continue
+            
         value = po_data.get(json_field)
         
         # 日期时间格式化
@@ -42,6 +76,16 @@ def map_header_data(po_data: Dict) -> Dict:
             value = str(value)
         
         result[db_field] = value
+    
+    # 处理供应商信息：从 sys_department 表查询
+    vendor_code = po_data.get('vendor')
+    if vendor_code:
+        supplier_id, supplier_name = get_supplier_info(cursor, vendor_code)
+        result['owner_dept_id'] = supplier_id
+        result['supplier_name'] = supplier_name
+    else:
+        result['owner_dept_id'] = None
+        result['supplier_name'] = None
     
     return result
 
@@ -135,7 +179,7 @@ def batch_insert_headers(
             if existing_id:
                 if update_existing:
                     delete_existing_po(cursor, existing_id)
-                    header_data = map_header_data(po_data)
+                    header_data = map_header_data(cursor, po_data)
                     header_id = insert_po_header(cursor, header_data)
                     header_map[po_code] = header_id
                     stats['updated'] += 1
@@ -145,7 +189,7 @@ def batch_insert_headers(
                     stats['skipped'] += 1
                     print(f"  ⊙ {po_code} (已存在)")
             else:
-                header_data = map_header_data(po_data)
+                header_data = map_header_data(cursor, po_data)
                 header_id = insert_po_header(cursor, header_data)
                 header_map[po_code] = header_id
                 stats['inserted'] += 1
