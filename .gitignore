@@ -23,3 +23,5 @@ data/excel/*.xlsx
 *.md
 *.txt
 *.csv
+*.har
+F12调试信息
