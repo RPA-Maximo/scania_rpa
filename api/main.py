@@ -33,7 +33,8 @@ app.add_middleware(
 # 数据模型
 class ReceiptItem(BaseModel):
     """入库项"""
-    po_line: str = Field(..., description="PO 行号")
+    po_line: Optional[str] = Field(None, description="PO 行号（与 item_num 二选一）")
+    item_num: Optional[str] = Field(None, description="项目号（与 po_line 二选一）")
     quantity: str = Field(..., description="入库数量")
     remark: Optional[str] = Field(None, description="备注")
 
@@ -82,12 +83,14 @@ async def create_receipt(request: ReceiptRequest):
     创建入库单
     
     通过 subprocess 调用 RPA 脚本批量处理入库操作
+    支持按 PO 行号或项目号查找
     """
     try:
         # 转换数据格式
         po_lines_data = [
             {
                 'po_line': item.po_line,
+                'item_num': item.item_num,
                 'quantity': item.quantity,
                 'remark': item.remark or ''
             }

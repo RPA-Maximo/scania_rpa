@@ -33,13 +33,14 @@ async def process_multiple_po_lines(
     auto_save: bool = False
 ) -> Dict[str, Any]:
     """
-    批量处理多个 PO 行：先勾选，后编辑
+    批量处理多个 PO 行：先勾选，后编辑（支持按行号或项目号查找）
     
     Args:
         main_frame: Playwright frame 对象
         po_lines_data: PO 行数据列表，每个元素格式：
             {
-                'po_line': '7',           # PO 行号（必填）
+                'po_line': '7',           # PO 行号（可选，与 item_num 二选一）
+                'item_num': '20326920',   # 项目号（可选，与 po_line 二选一）
                 'quantity': '5.00',       # 新的应到数量（可选）
                 'remark': '备注文本'       # 新的备注（可选）
             }
@@ -56,6 +57,7 @@ async def process_multiple_po_lines(
         }
     
     LLM 提示：
+    - 支持按 PO 行号或项目号查找
     - 策略：先勾选，后编辑
     - 先勾选 checkbox 可以避免编辑操作导致勾选状态被取消
     - 顺序处理每个 PO 行
@@ -64,11 +66,18 @@ async def process_multiple_po_lines(
     - 返回详细的处理结果
     
     Example:
+        # 按行号查找
         po_lines = [
             {'po_line': '7', 'quantity': '5.00', 'remark': '第一行备注'},
             {'po_line': '20', 'quantity': '3.00', 'remark': '第二行备注'},
-            {'po_line': '25', 'quantity': '10.00'}
         ]
+        
+        # 按项目号查找
+        po_lines = [
+            {'item_num': '20326920', 'quantity': '5.00', 'remark': '项目1'},
+            {'item_num': '20326794', 'quantity': '3.00', 'remark': '项目2'},
+        ]
+        
         result = await process_multiple_po_lines(main_frame, po_lines, auto_save=True)
     """
     results = []
@@ -77,13 +86,19 @@ async def process_multiple_po_lines(
     
     for idx, po_data in enumerate(po_lines_data):
         po_line = po_data.get('po_line')
+        item_num = po_data.get('item_num')
         new_quantity = po_data.get('quantity')
         new_remark = po_data.get('remark')
         
-        print(f"\n[{idx + 1}/{len(po_lines_data)}] 处理 PO 行 {po_line}...")
+        # 确定查找标识
+        search_key = po_line if po_line else item_num
+        search_type = 'PO 行' if po_line else '项目号'
+        
+        print(f"\n[{idx + 1}/{len(po_lines_data)}] 处理{search_type} {search_key}...")
         
         result_item = {
             'po_line': po_line,
+            'item_num': item_num,
             'success': False,
             'message': '',
             'find_result': None,
@@ -94,8 +109,13 @@ async def process_multiple_po_lines(
         
         try:
             # 步骤1: 查找 PO 行（不勾选）
-            print(f"  查找 PO 行 {po_line}...")
-            find_result = await find_and_check_po_line(main_frame, po_line, auto_check=False)
+            print(f"  查找{search_type} {search_key}...")
+            find_result = await find_and_check_po_line(
+                main_frame, 
+                po_line=po_line, 
+                item_num=item_num, 
+                auto_check=False
+            )
             result_item['find_result'] = find_result
             
             if not find_result.get('success'):
@@ -105,9 +125,15 @@ async def process_multiple_po_lines(
                 results.append(result_item)
                 continue
             
-            print(f"  ✓ 找到 PO 行")
+            print(f"  ✓ 找到{search_type}")
             row_data = find_result.get('rowData', {})
             checkbox_id = find_result.get('checkboxId')
+            
+            # 如果是按项目号查找，记录实际的 PO 行号
+            if item_num and not po_line:
+                actual_po_line = row_data.get('poLine')
+                result_item['po_line'] = actual_po_line
+                print(f"  → 对应 PO 行: {actual_po_line}")
             
             # 步骤2: 先勾选 PO 行
             print(f"  勾选 PO 行...")
@@ -156,7 +182,7 @@ async def process_multiple_po_lines(
             result_item['success'] = True
             result_item['message'] = '处理成功'
             processed += 1
-            print(f"  ✓ PO 行 {po_line} 处理完成")
+            print(f"  ✓ {search_type} {search_key} 处理完成")
             
         except Exception as e:
             result_item['message'] = f"处理异常: {str(e)}"

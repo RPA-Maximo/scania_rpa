@@ -14,16 +14,18 @@ from .utils import escape_js_string
 
 async def find_and_check_po_line(
     main_frame: Frame,
-    po_line: str,
+    po_line: str = None,
+    item_num: str = None,
     max_pages: int = None,
     auto_check: bool = True
 ) -> Dict[str, Any]:
     """
-    查找并勾选指定的 PO 行
+    查找并勾选指定的 PO 行（支持按行号或项目号查找）
     
     Args:
         main_frame: Playwright frame 对象
-        po_line: PO 行号，如 "20"
+        po_line: PO 行号，如 "20"（可选，与 item_num 二选一）
+        item_num: 项目号，如 "20326920"（可选，与 po_line 二选一）
         max_pages: 最多翻页次数（默认使用配置值）
         auto_check: 是否自动勾选（默认 True）
     
@@ -37,16 +39,26 @@ async def find_and_check_po_line(
         }
     
     LLM 提示：
+    - 支持按 PO 行号或项目号查找
     - 先在当前页查找
     - 如果没找到，自动翻页继续查找
     - 找到后根据 auto_check 决定是否勾选
     - 返回行数据包括所有字段的值和可编辑字段的 input ID
     """
+    if not po_line and not item_num:
+        return {
+            'success': False,
+            'message': '必须提供 po_line 或 item_num 参数'
+        }
+    
     if max_pages is None:
         max_pages = LIMITS.MAX_PAGES_TO_SEARCH
     
+    search_key = po_line if po_line else item_num
+    search_type = 'PO 行' if po_line else '项目号'
+    
     # 先在当前页查找
-    result = await _find_po_line_in_current_page(main_frame, po_line)
+    result = await _find_po_line_in_current_page(main_frame, po_line=po_line, item_num=item_num)
     
     if result.get('found'):
         # 找到了
@@ -59,7 +71,7 @@ async def find_and_check_po_line(
             # 不勾选，直接返回数据
             return {
                 'success': True,
-                'message': f'找到 PO 行 {po_line}（未勾选）',
+                'message': f'找到{search_type} {search_key}（未勾选）',
                 'checkboxId': result.get('checkboxId'),
                 'newState': result.get('checkboxChecked'),
                 'rowData': result.get('rowData')
@@ -78,7 +90,7 @@ async def find_and_check_po_line(
                 # 没有可用的下一页按钮，可能已经是最后一页
                 return {
                     'success': False,
-                    'message': f'未找到 PO 行 {po_line}（已到最后一页，共翻 {page_num + 1} 页）'
+                    'message': f'未找到{search_type} {search_key}（已到最后一页，共翻 {page_num + 1} 页）'
                 }
             
             # 获取按钮的父元素 <a> 标签
@@ -97,11 +109,11 @@ async def find_and_check_po_line(
         except Exception as e:
             return {
                 'success': False,
-                'message': f'未找到 PO 行 {po_line}（翻页失败: {str(e)}）'
+                'message': f'未找到{search_type} {search_key}（翻页失败: {str(e)}）'
             }
         
         # 再次查找
-        result = await _find_po_line_in_current_page(main_frame, po_line)
+        result = await _find_po_line_in_current_page(main_frame, po_line=po_line, item_num=item_num)
         
         if result.get('found'):
             if auto_check:
@@ -111,7 +123,7 @@ async def find_and_check_po_line(
             else:
                 return {
                     'success': True,
-                    'message': f'找到 PO 行 {po_line}（未勾选）',
+                    'message': f'找到{search_type} {search_key}（未勾选）',
                     'checkboxId': result.get('checkboxId'),
                     'newState': result.get('checkboxChecked'),
                     'rowData': result.get('rowData')
@@ -119,17 +131,18 @@ async def find_and_check_po_line(
     
     return {
         'success': False,
-        'message': f'未找到 PO 行 {po_line}（已翻 {max_pages} 页）'
+        'message': f'未找到{search_type} {search_key}（已翻 {max_pages} 页）'
     }
 
 
-async def _find_po_line_in_current_page(main_frame: Frame, po_line: str) -> Dict[str, Any]:
+async def _find_po_line_in_current_page(main_frame: Frame, po_line: str = None, item_num: str = None) -> Dict[str, Any]:
     """
-    在当前页查找 PO 行并返回完整数据
+    在当前页查找 PO 行并返回完整数据（支持按行号或项目号查找）
     
     Args:
         main_frame: Playwright frame 对象
-        po_line: PO 行号
+        po_line: PO 行号（可选）
+        item_num: 项目号（可选）
     
     Returns:
         dict: {
@@ -140,96 +153,126 @@ async def _find_po_line_in_current_page(main_frame: Frame, po_line: str) -> Dict
         }
     
     LLM 提示：
-    - 通过 PO 行号查找对应的 <span> 元素
+    - 支持按 PO 行号或项目号查找
+    - 通过查找对应的 <span> 元素
     - 使用 closest('tr') 找到整行
     - 遍历所有单元格提取数据
     - 保存可编辑字段的 input ID 用于后续编辑
     """
+    # 构建查找条件
+    if po_line:
+        search_condition = f"text === '{po_line}' && title === '{po_line}'"
+        search_column = COLUMNS.PO_LINE
+        search_type = "PO 行号"
+    elif item_num:
+        search_condition = f"text === '{item_num}' && title === '{item_num}'"
+        search_column = COLUMNS.ITEM_NUM
+        search_type = "项目号"
+    else:
+        return {'success': False, 'found': False}
+    
     result = await main_frame.evaluate(f"""
         () => {{
-            // 查找所有包含行号的 span
+            // 查找所有包含行号或项目号的 span
             const allSpans = document.querySelectorAll('span[title]');
             
-            // 收集所有可能的行号用于调试
-            const foundLines = [];
+            // 收集所有可能的值用于调试
+            const foundValues = [];
+            const debugInfo = [];
             
             for (let span of allSpans) {{
                 const text = span.textContent.trim();
                 const title = span.getAttribute('title');
                 
-                // 记录所有看起来像行号的 span
-                if (text && title && text === title && /^\\d+$/.test(text)) {{
-                    foundLines.push(text);
-                }}
-                
-                // 检查是否是目标行号
-                if (text === '{po_line}' && title === '{po_line}') {{
-                    // 找到包含这个 span 的 tr 行
-                    let row = span.closest('tr');
-                    if (row) {{
-                        // 在同一行中查找 checkbox
-                        const checkbox = row.querySelector('a[role="checkbox"] img');
-                        if (!checkbox) {{
-                            continue;
-                        }}
-                        
-                        // 提取行数据
+                // 找到包含这个 span 的 tr 行
+                let row = span.closest('tr');
+                if (row) {{
+                    // 在同一行中查找 checkbox
+                    const checkbox = row.querySelector('a[role="checkbox"] img');
+                    if (checkbox) {{
+                        // 这是一个有效的数据行，提取列索引
                         const cells = row.querySelectorAll('td');
-                        const rowData = {{}};
                         
-                        // 遍历所有单元格
+                        // 找到当前 span 在哪一列
+                        let columnIndex = -1;
                         for (let i = 0; i < cells.length; i++) {{
-                            const cell = cells[i];
-                            
-                            // 查找 span（只读字段）
-                            const span = cell.querySelector('span[title]');
-                            if (span) {{
-                                const spanText = span.textContent.trim();
-                                const spanTitle = span.getAttribute('title');
-                                
-                                // 根据列索引判断字段
-                                if (i === {COLUMNS.PO_LINE}) rowData.poLine = spanText;
-                                else if (i === {COLUMNS.ITEM_NUM}) rowData.itemNum = spanText;
-                                else if (i === {COLUMNS.DESCRIPTION}) rowData.description = spanTitle || spanText;
-                                else if (i === {COLUMNS.TO_STOREROOM}) rowData.toStoreroom = spanText;
-                                else if (i === {COLUMNS.ORDER_QTY}) rowData.orderQty = spanText;
-                                else if (i === {COLUMNS.RESERVED_QTY}) rowData.reservedQty = spanText;
-                            }}
-                            
-                            // 查找 input（可编辑字段）
-                            const input = cell.querySelector('input');
-                            if (input) {{
-                                const inputValue = input.value;
-                                const inputId = input.id;
-                                
-                                // 根据列索引判断字段，同时保存 input ID
-                                if (i === {COLUMNS.RECEIPT_QTY}) {{
-                                    rowData.receiptQty = inputValue;
-                                    rowData.receiptQtyInputId = inputId;
-                                }}
-                                else if (i === {COLUMNS.ORDER_UNIT}) {{
-                                    rowData.orderUnit = inputValue;
-                                    rowData.orderUnitInputId = inputId;
-                                }}
-                                else if (i === {COLUMNS.INVOICE}) {{
-                                    rowData.invoice = inputValue;
-                                    rowData.invoiceInputId = inputId;
-                                }}
-                                else if (i === {COLUMNS.REMARK}) {{
-                                    rowData.remark = inputValue;
-                                    rowData.remarkInputId = inputId;
-                                }}
+                            if (cells[i].contains(span)) {{
+                                columnIndex = i;
+                                break;
                             }}
                         }}
                         
-                        return {{
-                            success: true,
-                            found: true,
-                            checkboxId: checkbox.id,
-                            checkboxChecked: checkbox.getAttribute('checked'),
-                            rowId: row.id,
-                            rowData: rowData
-                        }};
+                        // 记录调试信息
+                        if (columnIndex === {search_column}) {{
+                            debugInfo.push({{
+                                value: text,
+                                title: title,
+                                columnIndex: columnIndex,
+                                matched: {search_condition}
+                            }});
+                            
+                            foundValues.push(text);
+                        }}
+                        
+                        // 检查是否是目标值
+                        if (columnIndex === {search_column} && {search_condition}) {{
+                            // 提取行数据
+                            const rowData = {{}};
+                            
+                            // 遍历所有单元格
+                            for (let i = 0; i < cells.length; i++) {{
+                                const cell = cells[i];
+                                
+                                // 查找 span（只读字段）
+                                const span = cell.querySelector('span[title]');
+                                if (span) {{
+                                    const spanText = span.textContent.trim();
+                                    const spanTitle = span.getAttribute('title');
+                                    
+                                    // 根据列索引判断字段
+                                    if (i === {COLUMNS.PO_LINE}) rowData.poLine = spanText;
+                                    else if (i === {COLUMNS.ITEM_NUM}) rowData.itemNum = spanText;
+                                    else if (i === {COLUMNS.DESCRIPTION}) rowData.description = spanTitle || spanText;
+                                    else if (i === {COLUMNS.TO_STOREROOM}) rowData.toStoreroom = spanText;
+                                    else if (i === {COLUMNS.ORDER_QTY}) rowData.orderQty = spanText;
+                                    else if (i === {COLUMNS.RESERVED_QTY}) rowData.reservedQty = spanText;
+                                }}
+                                
+                                // 查找 input（可编辑字段）
+                                const input = cell.querySelector('input');
+                                if (input) {{
+                                    const inputValue = input.value;
+                                    const inputId = input.id;
+                                    
+                                    // 根据列索引判断字段，同时保存 input ID
+                                    if (i === {COLUMNS.RECEIPT_QTY}) {{
+                                        rowData.receiptQty = inputValue;
+                                        rowData.receiptQtyInputId = inputId;
+                                    }}
+                                    else if (i === {COLUMNS.ORDER_UNIT}) {{
+                                        rowData.orderUnit = inputValue;
+                                        rowData.orderUnitInputId = inputId;
+                                    }}
+                                    else if (i === {COLUMNS.INVOICE}) {{
+                                        rowData.invoice = inputValue;
+                                        rowData.invoiceInputId = inputId;
+                                    }}
+                                    else if (i === {COLUMNS.REMARK}) {{
+                                        rowData.remark = inputValue;
+                                        rowData.remarkInputId = inputId;
+                                    }}
+                                }}
+                            }}
+                            
+                            return {{
+                                success: true,
+                                found: true,
+                                checkboxId: checkbox.id,
+                                checkboxChecked: checkbox.getAttribute('checked'),
+                                rowId: row.id,
+                                rowData: rowData
+                            }};
+                        }}
                     }}
                 }}
             }}
@@ -237,10 +280,18 @@ async def _find_po_line_in_current_page(main_frame: Frame, po_line: str) -> Dict
             return {{ 
                 success: false, 
                 found: false,
-                availableLines: foundLines
+                availableValues: foundValues,
+                debugInfo: debugInfo
             }};
         }}
     """)
+    
+    # 如果没找到，打印调试信息
+    if not result.get('found'):
+        print(f"  [调试] 在列 {search_column} 中查找{search_type}: {po_line or item_num}")
+        print(f"  [调试] 找到的值: {result.get('availableValues', [])}")
+        if result.get('debugInfo'):
+            print(f"  [调试] 详细信息: {result.get('debugInfo')}")
     
     return result
 
