@@ -31,6 +31,9 @@ async def batch_receipt_workflow(po_number="CN5123", po_lines_data=None, auto_sa
                 ...
             ]
         auto_save: 是否自动保存（默认 False）
+    
+    Returns:
+        dict: 处理结果，包含 success, total, processed, failed, saved, results 等字段
     """
     if po_lines_data is None:
         po_lines_data = [
@@ -62,7 +65,13 @@ async def batch_receipt_workflow(po_number="CN5123", po_lines_data=None, auto_sa
             print(f"  ✓ {message}")
         else:
             print(f"  ✗ {message}")
-            return
+            return {
+                'success': False,
+                'total': len(po_lines_data),
+                'processed': 0,
+                'failed': len(po_lines_data),
+                'error': message
+            }
         
         print("  等待列表加载...")
         success, waited = await wait_for_po_list(main_frame)
@@ -70,14 +79,26 @@ async def batch_receipt_workflow(po_number="CN5123", po_lines_data=None, auto_sa
             print(f"  ✓ 列表已加载（等待了 {waited:.1f} 秒）")
         else:
             print("  ✗ 列表加载超时")
-            return
+            return {
+                'success': False,
+                'total': len(po_lines_data),
+                'processed': 0,
+                'failed': len(po_lines_data),
+                'error': '列表加载超时'
+            }
         
         print(f"\n步骤4: 点击采购单号 '{po_number}'...")
         if await click_po_number(main_frame, po_number):
             print("  ✓ 完成")
         else:
             print("  ✗ 未找到采购单")
-            return
+            return {
+                'success': False,
+                'total': len(po_lines_data),
+                'processed': 0,
+                'failed': len(po_lines_data),
+                'error': f'未找到采购单 {po_number}'
+            }
         
         # === 批量处理 PO 行 ===
         print(f"\n=== 批量处理 {len(po_lines_data)} 个 PO 行 ===\n")
@@ -87,7 +108,13 @@ async def batch_receipt_workflow(po_number="CN5123", po_lines_data=None, auto_sa
             print("  ✓ 完成")
         else:
             print("  ✗ 未找到'选择已订购项'按钮")
-            return
+            return {
+                'success': False,
+                'total': len(po_lines_data),
+                'processed': 0,
+                'failed': len(po_lines_data),
+                'error': '未找到"选择已订购项"按钮'
+            }
         
         print(f"\n步骤6: 批量处理 PO 行...")
         batch_result = await process_multiple_po_lines(main_frame, po_lines_data, auto_save=auto_save)
@@ -113,10 +140,19 @@ async def batch_receipt_workflow(po_number="CN5123", po_lines_data=None, auto_sa
                 if not result['success']:
                     print(f"  - PO 行 {result['po_line']}: {result['message']}")
         
+        return batch_result
+        
     except Exception as e:
         print(f"✗ 错误: {e}")
         import traceback
         traceback.print_exc()
+        return {
+            'success': False,
+            'total': len(po_lines_data) if po_lines_data else 0,
+            'processed': 0,
+            'failed': len(po_lines_data) if po_lines_data else 0,
+            'error': str(e)
+        }
     finally:
         if p:
             await p.stop()

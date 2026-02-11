@@ -3,8 +3,14 @@ Maximo 浏览器连接模块
 
 LLM 提示：处理浏览器连接和页面查找
 """
+import sys
 from typing import Tuple
 from playwright.async_api import async_playwright, Browser, Page, Frame
+
+# Windows 平台需要设置事件循环策略
+if sys.platform == 'win32':
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 
 async def connect_to_browser(cdp_url: str = "http://localhost:9223") -> Tuple:
