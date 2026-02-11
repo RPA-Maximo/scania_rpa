@@ -68,6 +68,7 @@ class WaitTimes:
     CHECKBOX_STATE_UPDATE: float = 0.2
     AFTER_CONFIRM_CLICK: float = 2  # 点击确定后等待
     AFTER_SAVE_CLICK: float = 3  # 点击保存后等待
+    CHECKBOX_STABILIZE: float = 0.3  # 勾选后等待状态稳定
     
     # 轮询等待
     INPUT_SEARCH_MAX_WAIT: float = 10

@@ -4,11 +4,13 @@ Maximo 高级工作流模块
 
 LLM 提示：这个模块组合基础操作实现复杂的业务流程
 """
+import asyncio
 from typing import List, Dict, Any
 from playwright.async_api import Frame
 
 from .po_operations import find_and_check_po_line, edit_receipt_quantity, edit_remark, _check_checkbox
 from .navigation import click_confirm_button, click_save_button
+from .config import WAIT_TIMES
 
 
 async def check_po_line(main_frame: Frame, checkbox_id: str) -> Dict[str, Any]:
@@ -31,7 +33,7 @@ async def process_multiple_po_lines(
     auto_save: bool = False
 ) -> Dict[str, Any]:
     """
-    批量处理多个 PO 行：先编辑，后勾选
+    批量处理多个 PO 行：先勾选，后编辑
     
     Args:
         main_frame: Playwright frame 对象
@@ -54,8 +56,8 @@ async def process_multiple_po_lines(
         }
     
     LLM 提示：
-    - 改变策略：先编辑，后勾选
-    - 这样编辑的值已经在输入框里，勾选时 Maximo 会直接使用
+    - 策略：先勾选，后编辑
+    - 先勾选 checkbox 可以避免编辑操作导致勾选状态被取消
     - 顺序处理每个 PO 行
     - 某个失败不影响其他行
     - 如果 auto_save=True，处理完后自动点击确定和保存
@@ -117,9 +119,8 @@ async def process_multiple_po_lines(
             else:
                 print(f"  ✗ 勾选失败")
             
-            # 等待一下，确保勾选状态稳定
-            import asyncio
-            await asyncio.sleep(0.3)
+            # 等待勾选状态稳定
+            await asyncio.sleep(WAIT_TIMES.CHECKBOX_STABILIZE)
             
             # 步骤3: 编辑应到数量（如果提供）
             if new_quantity and row_data.get('receiptQtyInputId'):
