@@ -1,151 +1,175 @@
 """
-直接测试常见的接收单API端点
+测试可能用于入库操作的 API 端点
 """
 import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
+import json
+sys.path.insert(0, '.')
 import requests
 import urllib3
-from config import get_maximo_auth, DEFAULT_HEADERS, VERIFY_SSL, PROXIES
-from config.settings import MAXIMO_BASE_URL
+from config import get_maximo_auth, DEFAULT_HEADERS, PROXIES
+from config.settings import MAXIMO_BASE_URL, RAW_DATA_DIR
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-
-# 常见的 Maximo 接收单相关 Object Structures
-RECEIPT_ENDPOINTS = [
-    # OSLC API 标准端点
-    "MXAPIMATRECTRANS",      # Material Receipt Transaction
-    "MXAPIRECEIPT",          # Receipt
-    "MXAPIMATRECEIPT",       # Material Receipt
-    "MXMATRECTRANS",         # Material Receipt Trans (非API版)
-    "MXRECEIPT",
-    "MXAPIPORECEIPT",        # PO Receipt
-    "MXAPIRECEIVING",        # Receiving
-    # 库存相关
-    "MXAPIINVENTORY",        # Inventory (已知可用)
-    "MXAPIINVBALANCES",      # Inventory Balances
-    # 采购订单行
-    "MXAPIPOLINE",           # PO Line
-    "MXAPIPOLINECOST",       # PO Line Cost
-]
+urllib3.disable_warnings()
 
 
-def test_endpoint(endpoint_name: str):
-    """测试单个端点"""
-    try:
-        auth = get_maximo_auth()
-    except ValueError as e:
-        print(f"[错误] {e}")
-        return None
-    
-    api_url = f"{MAXIMO_BASE_URL}/oslc/os/{endpoint_name}"
-    
+def test_receipt_endpoints():
+    """测试可能用于入库的端点"""
+    auth = get_maximo_auth()
     headers = {
-        **DEFAULT_HEADERS,
-        'Cookie': auth['cookie'],
-        'x-csrf-token': auth['csrf_token'],
+        **DEFAULT_HEADERS, 
+        'Cookie': auth['cookie'], 
+        'x-csrf-token': auth['csrf_token']
     }
     
-    params = {
-        'oslc.select': '*',
-        'oslc.pageSize': 1,
-        '_dropnulls': 0,
-    }
+    # 潜在的入库相关端点
+    endpoints = [
+        'OSLCMATRECTRANS',
+        'REP_RECEIPT', 
+        'CXAPIMATUSETRANS',
+        'CXMATUSETRANS',
+        'MXAPIINVRES',
+        'CXAPIINVENTORY',
+        'MXL_INVTRANS',
+    ]
     
-    try:
-        resp = requests.get(
-            api_url,
-            headers=headers,
-            params=params,
-            verify=VERIFY_SSL,
-            proxies=PROXIES,
-            timeout=30
-        )
-        
-        if resp.status_code == 200:
-            data = resp.json()
-            items = data.get('member') or data.get('rdfs:member') or []
-            count = len(items)
-            if items:
-                # 获取字段列表
-                fields = [k for k in items[0].keys() if not k.startswith('_')]
-                return {
-                    'status': 'OK',
-                    'count': count,
-                    'fields': fields[:10],  # 只显示前10个字段
-                    'sample': {k: v for k, v in list(items[0].items())[:5]}
-                }
-            else:
-                return {'status': 'OK (空)', 'count': 0}
-        elif resp.status_code == 404:
-            return {'status': '不存在'}
-        elif resp.status_code == 401:
-            return {'status': '401认证失败'}
-        else:
-            return {'status': f'错误 {resp.status_code}'}
+    print("=" * 60)
+    print("测试入库相关端点")
+    print("=" * 60)
+    
+    for ep in endpoints:
+        url = f'{MAXIMO_BASE_URL}/oslc/os/{ep}'
+        try:
+            resp = requests.get(
+                url, 
+                headers=headers, 
+                params={'lean': 1, 'oslc.pageSize': 1}, 
+                verify=False, 
+                proxies=PROXIES, 
+                timeout=30
+            )
             
-    except Exception as e:
-        return {'status': f'异常: {str(e)[:30]}'}
-
-
-def main():
-    print("=" * 70)
-    print("Maximo 接收单相关 API 端点测试")
-    print("=" * 70)
-    print()
-    
-    results = []
-    
-    for endpoint in RECEIPT_ENDPOINTS:
-        print(f"测试 {endpoint:25s} ... ", end="", flush=True)
-        result = test_endpoint(endpoint)
-        
-        if result:
-            status = result.get('status', '未知')
-            if status == 'OK':
-                count = result.get('count', 0)
-                fields = result.get('fields', [])
-                print(f"✓ {status} (数据: {count} 条)")
-                print(f"    字段: {', '.join(fields[:5])}...")
-                results.append({
-                    'endpoint': endpoint,
-                    'available': True,
-                    **result
-                })
-            elif status == 'OK (空)':
-                print(f"✓ {status}")
-                results.append({
-                    'endpoint': endpoint,
-                    'available': True,
-                    **result
-                })
+            if resp.status_code == 200:
+                data = resp.json()
+                count = data.get('responseInfo', {}).get('totalCount', 'N/A')
+                member = data.get('member', [])
+                print(f'\n✓ {ep}: {count} 条记录')
+                if member:
+                    keys = list(member[0].keys())[:15]
+                    print(f'  字段: {keys}')
+                    # 保存样例数据
+                    output = RAW_DATA_DIR / f'{ep.lower()}_sample.json'
+                    with open(output, 'w', encoding='utf-8') as f:
+                        json.dump(member[0], f, ensure_ascii=False, indent=2)
+                    print(f'  已保存样例到: {output.name}')
+            elif resp.status_code == 400:
+                err = resp.json() if resp.text else {}
+                msg = err.get('Error', {}).get('message', resp.text[:100])
+                print(f'\n✗ {ep}: 400 - {msg}')
             else:
-                print(f"✗ {status}")
+                print(f'\n✗ {ep}: {resp.status_code}')
+                
+        except Exception as e:
+            print(f'\n! {ep}: 异常 - {str(e)[:50]}')
+
+
+def test_po_actions():
+    """测试 PO 上可用的 actions"""
+    auth = get_maximo_auth()
+    headers = {
+        **DEFAULT_HEADERS, 
+        'Cookie': auth['cookie'], 
+        'x-csrf-token': auth['csrf_token'],
+        'Content-Type': 'application/json'
+    }
     
-    # 总结
-    print()
-    print("=" * 70)
-    print("可用端点总结")
-    print("=" * 70)
+    print("\n" + "=" * 60)
+    print("测试 PO 上可调用的 Actions")
+    print("=" * 60)
     
-    available = [r for r in results if r.get('available')]
-    if available:
-        print(f"\n找到 {len(available)} 个可用端点:\n")
-        for ep in available:
-            print(f"  ★ {ep['endpoint']}")
-            if ep.get('fields'):
-                print(f"    字段: {', '.join(ep['fields'])}")
+    # 获取一个待接收的 PO
+    po_url = f'{MAXIMO_BASE_URL}/oslc/os/MXAPIPO'
+    params = {
+        'lean': 1,
+        'oslc.where': 'receipts="NONE" or receipts="PARTIAL"',
+        'oslc.select': 'ponum,status,receipts,href',
+        'oslc.pageSize': 1
+    }
+    
+    resp = requests.get(po_url, headers=headers, params=params, 
+                       verify=False, proxies=PROXIES, timeout=30)
+    
+    if resp.status_code == 200:
+        data = resp.json()
+        if data.get('member'):
+            po = data['member'][0]
+            print(f"测试 PO: {po.get('ponum')}, 状态: {po.get('status')}, 接收: {po.get('receipts')}")
+            
+            # 尝试获取 PO 的 schema 看有没有 actions
+            po_href = po.get('href', '').replace('http://childkey#', '')
+            if po_href:
+                schema_url = f'{MAXIMO_BASE_URL}/{po_href}?oslc.properties=*&oslc.meta=true'
+                resp = requests.get(schema_url, headers=headers, 
+                                   verify=False, proxies=PROXIES, timeout=30)
+                if resp.status_code == 200:
+                    po_data = resp.json()
+                    action_keys = [k for k in po_data.keys() if 'action' in k.lower()]
+                    if action_keys:
+                        print(f"  发现 action 相关字段: {action_keys}")
+                    
+                    # 保存完整数据
+                    output = RAW_DATA_DIR / 'po_with_actions.json'
+                    with open(output, 'w', encoding='utf-8') as f:
+                        json.dump(po_data, f, ensure_ascii=False, indent=2)
+                    print(f"  已保存到: {output}")
     else:
-        print("\n未找到可用的接收单端点")
-        print("\n建议:")
-        print("  1. 检查 Maximo 是否开放了接收单的 OSLC API")
-        print("  2. 联系管理员获取可用的 Object Structure 名称")
-        print("  3. 使用浏览器开发者工具抓取实际的 API 请求")
+        print(f"获取 PO 失败: {resp.status_code}")
 
 
-if __name__ == "__main__":
-    main()
+def test_script_actions():
+    """测试系统中可用的脚本/actions"""
+    auth = get_maximo_auth()
+    headers = {
+        **DEFAULT_HEADERS, 
+        'Cookie': auth['cookie'], 
+        'x-csrf-token': auth['csrf_token']
+    }
+    
+    print("\n" + "=" * 60)
+    print("搜索 REST API 可调用的业务逻辑")
+    print("=" * 60)
+    
+    # 尝试获取 OSLC Service Provider
+    urls = [
+        f'{MAXIMO_BASE_URL}/oslc/sp',
+        f'{MAXIMO_BASE_URL}/oslc/os/MXAPIPO/meta/actions',
+        f'{MAXIMO_BASE_URL}/oslc/script',
+    ]
+    
+    for url in urls:
+        try:
+            resp = requests.get(url, headers=headers, 
+                               verify=False, proxies=PROXIES, timeout=20)
+            print(f"\n{url.split('/maximo')[1]}:")
+            print(f"  状态码: {resp.status_code}")
+            if resp.status_code == 200 and resp.text:
+                # 保存响应
+                name = url.split('/')[-1] or 'sp'
+                output = RAW_DATA_DIR / f'oslc_{name}.json'
+                try:
+                    data = resp.json()
+                    with open(output, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                    print(f"  已保存到: {output.name}")
+                except:
+                    print(f"  响应: {resp.text[:200]}")
+        except Exception as e:
+            print(f"  异常: {str(e)[:50]}")
+
+
+if __name__ == '__main__':
+    test_receipt_endpoints()
+    test_po_actions()
+    test_script_actions()
+    print("\n" + "=" * 60)
+    print("测试完成!")
+    print("=" * 60)
