@@ -347,12 +347,25 @@ async def _find_po_line_in_current_page(main_frame, po_line):
                             const input = cell.querySelector('input');
                             if (input) {{
                                 const inputValue = input.value;
+                                const inputId = input.id;
                                 
-                                // 根据列索引判断字段
-                                if (i === 8) rowData.receiptQty = inputValue;
-                                else if (i === 11) rowData.orderUnit = inputValue;
-                                else if (i === 12) rowData.invoice = inputValue;
-                                else if (i === 13) rowData.remark = inputValue;
+                                // 根据列索引判断字段，同时保存 input ID
+                                if (i === 8) {{
+                                    rowData.receiptQty = inputValue;
+                                    rowData.receiptQtyInputId = inputId;
+                                }}
+                                else if (i === 11) {{
+                                    rowData.orderUnit = inputValue;
+                                    rowData.orderUnitInputId = inputId;
+                                }}
+                                else if (i === 12) {{
+                                    rowData.invoice = inputValue;
+                                    rowData.invoiceInputId = inputId;
+                                }}
+                                else if (i === 13) {{
+                                    rowData.remark = inputValue;
+                                    rowData.remarkInputId = inputId;
+                                }}
                             }}
                         }}
                         
@@ -406,3 +419,250 @@ async def _check_checkbox(main_frame, checkbox_id):
         await asyncio.sleep(1)
     
     return result
+
+
+
+async def edit_receipt_quantity(main_frame, input_id, new_quantity):
+    """
+    编辑应到数量
+    
+    Args:
+        main_frame: Playwright frame 对象
+        input_id: 应到数量输入框的 ID
+        new_quantity: 新的应到数量，如 "5.00"
+    
+    Returns:
+        dict: {success: bool, message: str, oldValue: str, newValue: str}
+    """
+    result = await main_frame.evaluate(f"""
+        () => {{
+            const input = document.getElementById('{input_id}');
+            if (input) {{
+                const oldValue = input.value;
+                
+                // 设置新值
+                input.value = '{new_quantity}';
+                
+                // 聚焦输入框
+                input.focus();
+                
+                // 触发多种事件确保 Maximo 识别变化
+                // 使用 createEvent 方式创建事件，兼容性更好
+                const inputEvent = document.createEvent('HTMLEvents');
+                inputEvent.initEvent('input', true, true);
+                input.dispatchEvent(inputEvent);
+                
+                const changeEvent = document.createEvent('HTMLEvents');
+                changeEvent.initEvent('change', true, true);
+                input.dispatchEvent(changeEvent);
+                
+                const blurEvent = document.createEvent('HTMLEvents');
+                blurEvent.initEvent('blur', true, true);
+                input.dispatchEvent(blurEvent);
+                
+                return {{
+                    success: true,
+                    message: '应到数量已修改',
+                    oldValue: oldValue,
+                    newValue: '{new_quantity}',
+                    inputId: '{input_id}'
+                }};
+            }}
+            return {{
+                success: false,
+                message: '未找到应到数量输入框',
+                inputId: '{input_id}'
+            }};
+        }}
+    """)
+    
+    if result.get('success'):
+        await asyncio.sleep(0.5)
+    
+    return result
+
+
+async def edit_remark(main_frame, input_id, remark_text):
+    """
+    编辑备注
+    
+    Args:
+        main_frame: Playwright frame 对象
+        input_id: 备注输入框的 ID
+        remark_text: 备注文本，最大 254 字符
+    
+    Returns:
+        dict: {success: bool, message: str, oldValue: str, newValue: str}
+    """
+    # 限制备注长度
+    if len(remark_text) > 254:
+        remark_text = remark_text[:254]
+    
+    # 转义特殊字符，防止 JavaScript 注入
+    remark_text_escaped = remark_text.replace("'", "\\'").replace('"', '\\"').replace('\n', '\\n')
+    
+    result = await main_frame.evaluate(f"""
+        () => {{
+            const input = document.getElementById('{input_id}');
+            if (input) {{
+                const oldValue = input.value;
+                
+                // 设置新值
+                input.value = '{remark_text_escaped}';
+                
+                // 聚焦输入框
+                input.focus();
+                
+                // 触发多种事件确保 Maximo 识别变化
+                // 使用 createEvent 方式创建事件，兼容性更好
+                const inputEvent = document.createEvent('HTMLEvents');
+                inputEvent.initEvent('input', true, true);
+                input.dispatchEvent(inputEvent);
+                
+                const changeEvent = document.createEvent('HTMLEvents');
+                changeEvent.initEvent('change', true, true);
+                input.dispatchEvent(changeEvent);
+                
+                const blurEvent = document.createEvent('HTMLEvents');
+                blurEvent.initEvent('blur', true, true);
+                input.dispatchEvent(blurEvent);
+                
+                return {{
+                    success: true,
+                    message: '备注已修改',
+                    oldValue: oldValue,
+                    newValue: input.value,
+                    inputId: '{input_id}'
+                }};
+            }}
+            return {{
+                success: false,
+                message: '未找到备注输入框',
+                inputId: '{input_id}'
+            }};
+        }}
+    """)
+    
+    if result.get('success'):
+        await asyncio.sleep(0.5)
+    
+    return result
+
+
+
+async def process_multiple_po_lines(main_frame, po_lines_data):
+    """
+    批量处理多个 PO 行：勾选并编辑
+    
+    Args:
+        main_frame: Playwright frame 对象
+        po_lines_data: PO 行数据列表，每个元素格式：
+            {
+                'po_line': '7',           # PO 行号（必填）
+                'quantity': '5.00',       # 新的应到数量（可选）
+                'remark': '备注文本'       # 新的备注（可选）
+            }
+    
+    Returns:
+        dict: {
+            success: bool,
+            total: int,           # 总数
+            processed: int,       # 成功处理的数量
+            failed: int,          # 失败的数量
+            results: [...]        # 每个 PO 行的处理结果
+        }
+    
+    Example:
+        po_lines = [
+            {'po_line': '7', 'quantity': '5.00', 'remark': '第一行备注'},
+            {'po_line': '20', 'quantity': '3.00', 'remark': '第二行备注'},
+            {'po_line': '25', 'quantity': '10.00'}
+        ]
+        result = await process_multiple_po_lines(main_frame, po_lines)
+    """
+    results = []
+    processed = 0
+    failed = 0
+    
+    for idx, po_data in enumerate(po_lines_data):
+        po_line = po_data.get('po_line')
+        new_quantity = po_data.get('quantity')
+        new_remark = po_data.get('remark')
+        
+        print(f"\n[{idx + 1}/{len(po_lines_data)}] 处理 PO 行 {po_line}...")
+        
+        result_item = {
+            'po_line': po_line,
+            'success': False,
+            'message': '',
+            'check_result': None,
+            'quantity_result': None,
+            'remark_result': None
+        }
+        
+        try:
+            # 步骤1: 查找并勾选 PO 行
+            print(f"  查找并勾选 PO 行 {po_line}...")
+            check_result = await find_and_check_po_line(main_frame, po_line)
+            result_item['check_result'] = check_result
+            
+            if not check_result.get('success'):
+                result_item['message'] = f"勾选失败: {check_result.get('message')}"
+                print(f"  ✗ {result_item['message']}")
+                failed += 1
+                results.append(result_item)
+                continue
+            
+            print(f"  ✓ 勾选成功")
+            row_data = check_result.get('rowData', {})
+            
+            # 步骤2: 编辑应到数量（如果提供）
+            if new_quantity and row_data.get('receiptQtyInputId'):
+                print(f"  修改应到数量: {row_data.get('receiptQty')} -> {new_quantity}")
+                qty_result = await edit_receipt_quantity(
+                    main_frame,
+                    row_data['receiptQtyInputId'],
+                    new_quantity
+                )
+                result_item['quantity_result'] = qty_result
+                
+                if qty_result.get('success'):
+                    print(f"  ✓ 应到数量已修改")
+                else:
+                    print(f"  ✗ 应到数量修改失败: {qty_result.get('message')}")
+            
+            # 步骤3: 编辑备注（如果提供）
+            if new_remark is not None and row_data.get('remarkInputId'):
+                old_remark = row_data.get('remark', '')
+                print(f"  修改备注: '{old_remark}' -> '{new_remark}'")
+                remark_result = await edit_remark(
+                    main_frame,
+                    row_data['remarkInputId'],
+                    new_remark
+                )
+                result_item['remark_result'] = remark_result
+                
+                if remark_result.get('success'):
+                    print(f"  ✓ 备注已修改")
+                else:
+                    print(f"  ✗ 备注修改失败: {remark_result.get('message')}")
+            
+            result_item['success'] = True
+            result_item['message'] = '处理成功'
+            processed += 1
+            print(f"  ✓ PO 行 {po_line} 处理完成")
+            
+        except Exception as e:
+            result_item['message'] = f"处理异常: {str(e)}"
+            print(f"  ✗ {result_item['message']}")
+            failed += 1
+        
+        results.append(result_item)
+    
+    return {
+        'success': failed == 0,
+        'total': len(po_lines_data),
+        'processed': processed,
+        'failed': failed,
+        'results': results
+    }

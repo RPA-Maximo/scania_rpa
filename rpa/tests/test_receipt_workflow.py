@@ -14,17 +14,21 @@ from rpa.maximo_actions import (
     wait_for_po_list,
     click_po_number,
     click_select_ordered_items,
-    find_and_check_po_line
+    find_and_check_po_line,
+    edit_receipt_quantity,
+    edit_remark
 )
 
 
-async def receipt_workflow(po_number="CN5123", po_line="20"):
+async def receipt_workflow(po_number="CN5123", po_line="20", new_quantity=None, new_remark=None):
     """
     入库接收完整流程
     
     Args:
         po_number: 采购单号，如 "CN5123"
         po_line: PO 行号，如 "20"
+        new_quantity: 新的应到数量，如 "5.00"（可选）
+        new_remark: 新的备注文本（可选）
     """
     p = None
     try:
@@ -99,6 +103,40 @@ async def receipt_workflow(po_number="CN5123", po_line="20"):
                 print(f"    订购单位: {row_data.get('orderUnit', 'N/A')}")
                 print(f"    发票: {row_data.get('invoice', 'N/A')}")
                 print(f"    备注: {row_data.get('remark', 'N/A')}")
+                
+                # === 编辑字段 ===
+                if new_quantity or new_remark:
+                    print(f"\n=== 编辑字段 ===\n")
+                
+                # 编辑应到数量
+                if new_quantity and row_data.get('receiptQtyInputId'):
+                    print(f"步骤7: 修改应到数量为 '{new_quantity}'...")
+                    qty_result = await edit_receipt_quantity(
+                        main_frame,
+                        row_data['receiptQtyInputId'],
+                        new_quantity
+                    )
+                    if qty_result.get('success'):
+                        print(f"  ✓ {qty_result.get('message')}")
+                        print(f"    原值: {qty_result.get('oldValue')}")
+                        print(f"    新值: {qty_result.get('newValue')}")
+                    else:
+                        print(f"  ✗ {qty_result.get('message')}")
+                
+                # 编辑备注
+                if new_remark and row_data.get('remarkInputId'):
+                    print(f"\n步骤8: 修改备注为 '{new_remark}'...")
+                    remark_result = await edit_remark(
+                        main_frame,
+                        row_data['remarkInputId'],
+                        new_remark
+                    )
+                    if remark_result.get('success'):
+                        print(f"  ✓ {remark_result.get('message')}")
+                        print(f"    原值: {remark_result.get('oldValue')}")
+                        print(f"    新值: {remark_result.get('newValue')}")
+                    else:
+                        print(f"  ✗ {remark_result.get('message')}")
         else:
             print(f"  ✗ {result.get('message')}")
             return
@@ -119,4 +157,13 @@ async def receipt_workflow(po_number="CN5123", po_line="20"):
 
 if __name__ == "__main__":
     # 可以修改这里的参数
-    asyncio.run(receipt_workflow(po_number="CN5123", po_line="7"))
+    # 示例1: 只勾选，不编辑
+    # asyncio.run(receipt_workflow(po_number="CN5123", po_line="7"))
+    
+    # 示例2: 勾选并编辑应到数量和备注
+    asyncio.run(receipt_workflow(
+        po_number="CN5123", 
+        po_line="7",
+        new_quantity="3.00",
+        new_remark="自动化测试备注"
+    ))
