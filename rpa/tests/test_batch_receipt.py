@@ -18,7 +18,7 @@ from rpa.maximo_actions import (
 )
 
 
-async def batch_receipt_workflow(po_number="CN5123", po_lines_data=None):
+async def batch_receipt_workflow(po_number="CN5123", po_lines_data=None, auto_save=False):
     """
     批量入库接收流程
     
@@ -30,6 +30,7 @@ async def batch_receipt_workflow(po_number="CN5123", po_lines_data=None):
                 {'po_line': '20', 'quantity': '3.00', 'remark': '备注2'},
                 ...
             ]
+        auto_save: 是否自动保存（默认 False）
     """
     if po_lines_data is None:
         po_lines_data = [
@@ -89,13 +90,19 @@ async def batch_receipt_workflow(po_number="CN5123", po_lines_data=None):
             return
         
         print(f"\n步骤6: 批量处理 PO 行...")
-        batch_result = await process_multiple_po_lines(main_frame, po_lines_data)
+        batch_result = await process_multiple_po_lines(main_frame, po_lines_data, auto_save=auto_save)
         
         # 显示处理结果
         print(f"\n=== 批量处理结果 ===")
         print(f"总数: {batch_result['total']}")
         print(f"成功: {batch_result['processed']}")
         print(f"失败: {batch_result['failed']}")
+        
+        if auto_save:
+            if batch_result.get('saved'):
+                print(f"保存状态: ✓ 已保存")
+            else:
+                print(f"保存状态: ✗ 未保存")
         
         if batch_result['success']:
             print(f"\n✓ 所有 PO 行处理完成！")
@@ -116,16 +123,16 @@ async def batch_receipt_workflow(po_number="CN5123", po_lines_data=None):
 
 
 if __name__ == "__main__":
-    # 示例1: 使用默认数据（处理 PO 行 7 和 20）
+    # 示例1: 使用默认数据（处理 PO 行 7 和 20），不自动保存
     # asyncio.run(batch_receipt_workflow(po_number="CN5123"))
     
-    # 示例2: 自定义 PO 行数据
+    # 示例2: 自定义 PO 行数据，启用自动保存
     custom_po_lines = [
-        {'po_line': '7', 'quantity': '5.00', 'remark': '自动化测试-行7'},
-        {'po_line': '20', 'quantity': '2.00', 'remark': '自动化测试-行20'},
-        {'po_line': '25', 'quantity': '10.00', 'remark': '自动化测试-行25'}
+        {'po_line': '10', 'quantity': '5.00', 'remark': '自动化测试-行10'},
+        {'po_line': '22', 'quantity': '2.00', 'remark': '自动化测试-行22'},
     ]
     asyncio.run(batch_receipt_workflow(
         po_number="CN5123",
-        po_lines_data=custom_po_lines
+        po_lines_data=custom_po_lines,
+        auto_save=False  # 启用自动保存
     ))
