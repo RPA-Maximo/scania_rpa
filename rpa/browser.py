@@ -24,10 +24,10 @@ async def connect_to_browser(cdp_url: str = "http://localhost:9223") -> Tuple:
         (playwright_instance, browser, maximo_page, main_frame)
     
     Raises:
-        Exception: 未找到 Maximo 页面
+        Exception: 未找到 Maximo 页面或浏览器未启动
     
     LLM 提示：
-    - 浏览器需要以调试模式启动：chrome.exe --remote-debugging-port=9223
+    - 浏览器需要以调试模式启动：python start_browser.py
     - 返回的 main_frame 是主要操作对象
     
     Example:
@@ -35,8 +35,16 @@ async def connect_to_browser(cdp_url: str = "http://localhost:9223") -> Tuple:
         # 使用 frame 进行操作
         await frame.evaluate("...")
     """
-    p = await async_playwright().start()
-    browser = await p.chromium.connect_over_cdp(cdp_url)
+    try:
+        p = await async_playwright().start()
+        browser = await p.chromium.connect_over_cdp(cdp_url)
+    except Exception as e:
+        error_msg = (
+            "无法连接到浏览器，请先启动浏览器：\n\n"
+            "  python start_browser.py\n\n"
+            f"详细错误：{str(e)}"
+        )
+        raise Exception(error_msg)
     
     # 查找 Maximo 页面
     maximo_page = None
@@ -49,7 +57,27 @@ async def connect_to_browser(cdp_url: str = "http://localhost:9223") -> Tuple:
             break
     
     if not maximo_page:
-        raise Exception("未找到 Maximo 页面，请确保浏览器中已打开 Maximo 系统")
+        # 检查是否在登录页
+        login_page = None
+        for context in browser.contexts:
+            for page in context.pages:
+                if "auth.scania" in page.url.lower() or "login" in page.url.lower():
+                    login_page = page
+                    break
+            if login_page:
+                break
+        
+        if login_page:
+            error_msg = (
+                "检测到登录页面，请先登录 Maximo 系统\n"
+                f"当前页面：{login_page.url}"
+            )
+        else:
+            error_msg = (
+                "未找到 Maximo 页面，请在浏览器中打开 Maximo 系统\n"
+                "或运行：python start_browser.py"
+            )
+        raise Exception(error_msg)
     
     # 查找主 iframe
     main_frame = _find_main_frame(maximo_page)

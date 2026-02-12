@@ -34,16 +34,31 @@ app.add_middleware(
 class ReceiptItem(BaseModel):
     """入库项"""
     po_line: Optional[str] = Field(None, description="PO 行号（与 item_num 二选一）")
-    item_num: Optional[str] = Field(None, description="项目号（与 po_line 二选一）")
-    quantity: str = Field(..., description="入库数量")
-    remark: Optional[str] = Field(None, description="备注")
+    item_num: Optional[str] = Field(None, description="项目号（与 item_num 二选一）")
+    quantity: float = Field(..., description="入库数量（支持小数）", example=2.5)
+    remark: Optional[str] = Field(None, description="备注", example="自动入库")
 
 
 class ReceiptRequest(BaseModel):
     """入库请求"""
     po_number: str = Field(..., description="采购单号", example="CN5123")
-    items: List[ReceiptItem] = Field(..., description="入库项列表")
-    auto_save: bool = Field(False, description="是否自动保存")
+    items: List[ReceiptItem] = Field(
+        ..., 
+        description="入库项列表",
+        example=[
+            {
+                "item_num": "20326862",
+                "quantity": 2.0,
+                "remark": "这是一个备注"
+            },
+            {
+                "item_num": "20346794",
+                "quantity": 3.5,
+                "remark": "rpa自动处理"
+            }
+        ]
+    )
+    auto_save: bool = Field(False, description="是否自动保存（false 表示仅填写不保存）")
 
 
 class ReceiptResponse(BaseModel):
@@ -86,12 +101,12 @@ async def create_receipt(request: ReceiptRequest):
     支持按 PO 行号或项目号查找
     """
     try:
-        # 转换数据格式
+        # 转换数据格式（将 float 转为字符串格式）
         po_lines_data = [
             {
                 'po_line': item.po_line,
                 'item_num': item.item_num,
-                'quantity': item.quantity,
+                'quantity': f"{item.quantity:.2f}",  # 转换为两位小数的字符串
                 'remark': item.remark or ''
             }
             for item in request.items
