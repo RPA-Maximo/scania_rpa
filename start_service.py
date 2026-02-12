@@ -7,7 +7,8 @@
 3. 启动 API 服务
 
 使用方法：
-    python start_service.py
+    python start_service.py              # 正常启动
+    python start_service.py --clean      # 清理旧进程后启动
 """
 import subprocess
 import os
@@ -39,6 +40,32 @@ def print_header(title):
     print(title)
     print("=" * 60)
     print()
+
+
+def kill_edge_processes():
+    """杀掉所有 Edge 进程"""
+    print("正在关闭所有 Edge 进程...")
+    try:
+        # Windows 使用 taskkill
+        result = subprocess.run(
+            ["taskkill", "/F", "/IM", "msedge.exe", "/T"],
+            capture_output=True,
+            text=True
+        )
+        
+        if "成功" in result.stdout or "SUCCESS" in result.stdout:
+            print("✓ Edge 进程已关闭")
+            time.sleep(2)  # 等待进程完全关闭
+            return True
+        elif "找不到" in result.stdout or "not found" in result.stdout.lower():
+            print("✓ 没有运行中的 Edge 进程")
+            return True
+        else:
+            print(f"⚠ {result.stdout}")
+            return True
+    except Exception as e:
+        print(f"⚠ 无法关闭 Edge 进程: {e}")
+        return False
 
 
 def check_browser_running():
@@ -99,7 +126,7 @@ def start_browser():
         
         # 等待浏览器启动
         print("等待浏览器启动...", end="", flush=True)
-        for i in range(10):
+        for i in range(15):  # 增加到 15 秒
             time.sleep(1)
             if check_browser_running():
                 print(" ✓")
@@ -161,7 +188,16 @@ def start_api():
 
 def main():
     """主流程"""
+    # 检查命令行参数
+    clean_mode = "--clean" in sys.argv or "-c" in sys.argv
+    
     print_header("Maximo RPA 服务启动")
+    
+    # 如果是清理模式，先杀掉所有 Edge 进程
+    if clean_mode:
+        print("🧹 清理模式：将关闭所有 Edge 进程")
+        kill_edge_processes()
+        print()
     
     # 步骤 1: 检查/启动浏览器
     print("步骤 1/3: 检查浏览器")
@@ -172,7 +208,11 @@ def main():
         if not start_browser():
             print()
             print("❌ 浏览器启动失败")
-            print("   请手动运行：python start_browser.py")
+            print()
+            print("💡 提示：")
+            print("   1. 可能有其他 Edge 进程占用端口")
+            print("   2. 尝试使用清理模式：python start_service.py --clean")
+            print("   3. 或手动关闭所有 Edge 窗口后重试")
             return False
         print("✓ 浏览器启动成功")
     
