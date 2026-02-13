@@ -12,6 +12,43 @@ from .config import SELECTORS, WAIT_TIMES
 from .logger import logger, log_step
 
 
+async def get_current_page_title(main_frame: Frame) -> str:
+    """
+    获取当前页面标题
+    
+    Args:
+        main_frame: Playwright frame 对象
+    
+    Returns:
+        页面标题
+    """
+    return await main_frame.page.title()
+
+
+async def check_if_on_receipts_search_page(main_frame: Frame) -> bool:
+    """
+    检查是否在接收查询页面（有 PO 号输入框的页面）
+    
+    Args:
+        main_frame: Playwright frame 对象
+    
+    Returns:
+        是否在接收查询页面
+    """
+    result = await main_frame.evaluate(f"""
+        () => {{
+            const inputs = document.querySelectorAll('input[role="textbox"]');
+            for (let input of inputs) {{
+                if (input.id.includes('{SELECTORS.INPUT_PO_NUMBER_PATTERN}') && input.id.includes('txt-tb')) {{
+                    return true;
+                }}
+            }}
+            return false;
+        }}
+    """)
+    return result
+
+
 async def click_menu_purchase(main_frame: Frame) -> None:
     """
     点击'采购'菜单
@@ -21,6 +58,21 @@ async def click_menu_purchase(main_frame: Frame) -> None:
     
     LLM 提示：这是进入采购模块的第一步
     """
+    logger.debug(f"尝试点击采购菜单，ID: {SELECTORS.MENU_PURCHASE}")
+    
+    # 检查元素是否存在
+    exists = await main_frame.evaluate(f"""
+        () => {{
+            const elem = document.getElementById('{SELECTORS.MENU_PURCHASE}');
+            return elem !== null;
+        }}
+    """)
+    
+    if not exists:
+        logger.warning(f"采购菜单元素不存在 (ID: {SELECTORS.MENU_PURCHASE})")
+    else:
+        logger.debug("采购菜单元素存在，执行点击")
+    
     await main_frame.evaluate(f"""
         () => {{
             const elem = document.getElementById('{SELECTORS.MENU_PURCHASE}');
@@ -28,6 +80,7 @@ async def click_menu_purchase(main_frame: Frame) -> None:
         }}
     """)
     await asyncio.sleep(WAIT_TIMES.AFTER_MENU_CLICK)
+    logger.debug(f"等待 {WAIT_TIMES.AFTER_MENU_CLICK}s 后完成")
 
 
 async def click_menu_receipts(main_frame: Frame) -> None:
@@ -39,6 +92,21 @@ async def click_menu_receipts(main_frame: Frame) -> None:
     
     LLM 提示：从采购模块进入接收页面
     """
+    logger.debug(f"尝试点击接收菜单，ID: {SELECTORS.MENU_RECEIPTS}")
+    
+    # 检查元素是否存在
+    exists = await main_frame.evaluate(f"""
+        () => {{
+            const elem = document.getElementById('{SELECTORS.MENU_RECEIPTS}');
+            return elem !== null;
+        }}
+    """)
+    
+    if not exists:
+        logger.warning(f"接收菜单元素不存在 (ID: {SELECTORS.MENU_RECEIPTS})")
+    else:
+        logger.debug("接收菜单元素存在，执行点击")
+    
     await main_frame.evaluate(f"""
         () => {{
             const elem = document.getElementById('{SELECTORS.MENU_RECEIPTS}');
@@ -46,6 +114,7 @@ async def click_menu_receipts(main_frame: Frame) -> None:
         }}
     """)
     await asyncio.sleep(WAIT_TIMES.AFTER_RECEIPTS_CLICK)
+    logger.debug(f"等待 {WAIT_TIMES.AFTER_RECEIPTS_CLICK}s 后完成")
 
 
 async def search_all_po(main_frame: Frame) -> Tuple[bool, str]:

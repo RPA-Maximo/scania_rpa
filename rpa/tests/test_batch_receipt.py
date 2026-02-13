@@ -16,6 +16,7 @@ from rpa.maximo_actions import (
     click_select_ordered_items,
     process_multiple_po_lines
 )
+from rpa.navigation import check_if_on_receipts_search_page, get_current_page_title
 from rpa.logger import logger, log_workflow
 
 
@@ -52,29 +53,57 @@ async def batch_receipt_workflow(po_number="CN5123", po_lines_data=None, auto_sa
         # 连接浏览器
         logger.step(0, 6, "连接浏览器")
         p, browser, maximo_page, main_frame = await connect_to_browser()
-        current_title = await maximo_page.title()
+        current_title = await get_current_page_title(main_frame)
         logger.success(f"成功连接到浏览器，当前页面: {current_title}")
         
-        # === 打开采购单详情页 ===
-        logger.subsection(f"打开采购单 {po_number}")
+        # 检查当前页面状态
+        logger.info("检查当前页面状态...")
+        on_search_page = await check_if_on_receipts_search_page(main_frame)
         
-        logger.step(1, 6, "点击'采购'菜单")
-        try:
-            await click_menu_purchase(main_frame)
-            logger.success("完成")
-        except Exception as e:
-            logger.error(f"失败: {e}")
-            raise
-        
-        logger.step(2, 6, "点击'接收'")
-        try:
-            await click_menu_receipts(main_frame)
-            logger.success("完成")
-        except Exception as e:
-            logger.error(f"失败: {e}")
-            raise
-        
-        logger.step(3, 6, "查询所有 PO")
+        if on_search_page:
+            logger.success("当前已在接收查询页面，跳过导航步骤")
+            # 直接跳到查询步骤
+            logger.step(3, 6, "查询所有 PO")
+        else:
+            logger.warning(f"当前不在接收查询页面 (页面: {current_title})，需要导航")
+            
+            # === 导航到接收查询页面 ===
+            logger.subsection(f"导航到接收查询页面")
+            
+            logger.step(1, 6, "点击'采购'菜单")
+            try:
+                await click_menu_purchase(main_frame)
+                logger.success("完成")
+            except Exception as e:
+                logger.error(f"失败: {e}")
+                raise
+            
+            logger.step(2, 6, "点击'接收'")
+            try:
+                await click_menu_receipts(main_frame)
+                logger.success("完成")
+            except Exception as e:
+                logger.error(f"失败: {e}")
+                raise
+            
+            # 再次检查是否到达接收查询页面
+            logger.info("验证是否到达接收查询页面...")
+            await asyncio.sleep(2)  # 等待页面加载
+            on_search_page = await check_if_on_receipts_search_page(main_frame)
+            
+            if not on_search_page:
+                logger.error("导航后仍未到达接收查询页面")
+                return {
+                    'success': False,
+                    'total': len(po_lines_data),
+                    'processed': 0,
+                    'failed': len(po_lines_data),
+                    'error': '无法导航到接收查询页面'
+                }
+            else:
+                logger.success("已到达接收查询页面")
+            
+            logger.step(3, 6, "查询所有 PO")
         try:
             success, message = await search_all_po(main_frame)
             if success:
