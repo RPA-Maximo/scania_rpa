@@ -127,8 +127,10 @@ def navigate_to_manage_shell(page_id: str):
 
 
 async def navigate_to_manage_shell_async():
-    """使用 Playwright 执行 JavaScript 跳转到 ITEM 应用"""
+    """使用 Playwright 导航到 manage-shell 并执行 JavaScript 跳转到 ITEM 应用"""
     from playwright.async_api import async_playwright
+    
+    target_url = "https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell"
     
     try:
         p = await async_playwright().start()
@@ -145,23 +147,49 @@ async def navigate_to_manage_shell_async():
                 break
         
         if home_page:
-            print(f"✓ 找到 home 页面，正在执行跳转...")
+            print(f"✓ 找到 home 页面，正在导航到 manage-shell...")
             
-            # 执行 JavaScript 跳转到 ITEM 应用
-            await home_page.evaluate("sendEvent('changeapp','startcntr','ITEM',3);")
-            print(f"✓ 已执行跳转命令")
+            # 先导航到 manage-shell
+            await home_page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+            print(f"✓ 导航成功：{target_url}")
             
-            # 等待 60 秒
-            print("⏳ 等待 60 秒让页面完全加载...")
-            for i in range(60, 0, -1):
+            # 等待 40 秒让页面加载
+            print("⏳ 等待页面加载...")
+            for i in range(40, 0, -1):
                 print(f"  剩余 {i} 秒...", end="\r", flush=True)
                 await asyncio.sleep(1)
             print()
-            print("✓ 等待完成")
             
-            await browser.close()
-            await p.stop()
-            return True
+            # 尝试执行 JavaScript 跳转到 ITEM 应用（最多重试 3 次）
+            max_retries = 3
+            for attempt in range(1, max_retries + 1):
+                try:
+                    print(f"尝试执行跳转命令 (第 {attempt} 次)...")
+                    await home_page.evaluate("sendEvent('changeapp','startcntr','ITEM',3);")
+                    print(f"✓ 跳转命令执行成功")
+                    
+                    # 再等待 20 秒让 ITEM 应用加载
+                    print("⏳ 等待 ITEM 应用加载...")
+                    for i in range(20, 0, -1):
+                        print(f"  剩余 {i} 秒...", end="\r", flush=True)
+                        await asyncio.sleep(1)
+                    print()
+                    print("✓ 等待完成")
+                    
+                    await browser.close()
+                    await p.stop()
+                    return True
+                    
+                except Exception as e:
+                    if attempt < max_retries:
+                        print(f"⚠ 执行失败: {e}")
+                        print(f"  等待 10 秒后重试...")
+                        await asyncio.sleep(10)
+                    else:
+                        print(f"⚠ 执行失败 (已重试 {max_retries} 次): {e}")
+                        await browser.close()
+                        await p.stop()
+                        return False
         else:
             print("⚠ 未找到 home 页面")
             await browser.close()
