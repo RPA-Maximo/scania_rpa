@@ -186,6 +186,117 @@ def start_api():
         print("API 服务已停止")
 
 
+def navigate_to_manage():
+    """导航到 Manage 页面并验证侧边栏"""
+    import asyncio
+    from playwright.async_api import async_playwright
+    
+    async def _navigate():
+        """异步导航函数"""
+        p = None
+        try:
+            # 连接到浏览器
+            p = await async_playwright().start()
+            browser = await p.chromium.connect_over_cdp(f"http://localhost:{DEBUG_PORT}")
+            
+            # 查找 Maximo 页面
+            maximo_page = None
+            for context in browser.contexts:
+                for page in context.pages:
+                    url = page.url.lower()
+                    if "maximo" in url or "scania" in url:
+                        maximo_page = page
+                        break
+                if maximo_page:
+                    break
+            
+            if not maximo_page:
+                print("✗ 未找到 Maximo 页面")
+                return False
+            
+            current_url = maximo_page.url
+            print(f"  当前页面：{current_url}")
+            
+            # 检查是否在 home 页面
+            if "main.home" in current_url:
+                print("  检测到 Home 页面，查找 Launch 链接...")
+                
+                # 查找并点击 Launch 链接
+                try:
+                    launch_link = await maximo_page.wait_for_selector(
+                        'a.bx--link[href*="manage-shell"]',
+                        timeout=5000
+                    )
+                    
+                    if launch_link:
+                        print("  找到 Launch 链接，正在跳转...")
+                        await launch_link.click()
+                        
+                        # 等待页面跳转
+                        await asyncio.sleep(5)
+                        print(f"  已跳转到：{maximo_page.url}")
+                    else:
+                        print("  ✗ 未找到 Launch 链接")
+                        return False
+                        
+                except Exception as e:
+                    print(f"  ✗ 查找 Launch 链接失败：{e}")
+                    return False
+            
+            # 等待页面完全加载
+            print("  等待 Manage 页面加载...")
+            await asyncio.sleep(3)
+            
+            # 查找主 iframe 并检查侧边栏
+            print("  检查侧边栏菜单...")
+            main_frame = None
+            for frame in maximo_page.frames:
+                if "maximo/ui/" in frame.url and "uisessionid" in frame.url:
+                    main_frame = frame
+                    break
+            
+            if not main_frame:
+                main_frame = maximo_page.main_frame
+            
+            # 检查侧边栏是否存在（查找"采购"菜单）
+            try:
+                # 使用 rpa/config.py 中的选择器
+                from rpa.config import SELECTORS
+                
+                purchase_menu = await main_frame.evaluate(f"""
+                    () => {{
+                        const elem = document.getElementById('{SELECTORS.MENU_PURCHASE}');
+                        return elem !== null;
+                    }}
+                """)
+                
+                if purchase_menu:
+                    print("  ✓ 侧边栏菜单已就绪")
+                    return True
+                else:
+                    print("  ✗ 未找到侧边栏菜单")
+                    print("  提示：请手动刷新页面或重新登录")
+                    return False
+                    
+            except Exception as e:
+                print(f"  ✗ 检查侧边栏失败：{e}")
+                return False
+            
+        except Exception as e:
+            print(f"✗ 导航失败：{e}")
+            return False
+        finally:
+            if p:
+                await p.stop()
+    
+    # 运行异步函数
+    try:
+        return asyncio.run(_navigate())
+    except Exception as e:
+        print(f"✗ 执行失败：{e}")
+        return False
+
+
 def main():
     """主流程"""
     # 检查命令行参数
@@ -200,7 +311,7 @@ def main():
         print()
     
     # 步骤 1: 检查/启动浏览器
-    print("步骤 1/3: 检查浏览器")
+    print("步骤 1/4: 检查浏览器")
     if check_browser_running():
         print("✓ 浏览器已运行")
     else:
@@ -218,7 +329,7 @@ def main():
     
     # 步骤 2: 检查登录状态
     print()
-    print("步骤 2/3: 检查登录状态")
+    print("步骤 2/4: 检查登录状态")
     logged_in, url = check_maximo_logged_in()
     
     if logged_in:
@@ -235,9 +346,18 @@ def main():
             print("❌ 请先登录 Maximo，然后重新运行此脚本")
             return False
     
-    # 步骤 3: 启动 API
+    # 步骤 3: 导航到 Manage 页面并验证
     print()
-    print("步骤 3/3: 启动 API 服务")
+    print("步骤 3/4: 准备 Manage 页面")
+    if not navigate_to_manage():
+        print()
+        print("❌ 无法准备 Manage 页面")
+        print("   请手动导航到 Manage 页面后重试")
+        return False
+    
+    # 步骤 4: 启动 API
+    print()
+    print("步骤 4/4: 启动 API 服务")
     print()
     print_header("服务已就绪")
     print("API 文档：http://localhost:8000/docs")
