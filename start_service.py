@@ -131,7 +131,8 @@ async def navigate_to_manage_shell_async():
     from playwright.async_api import async_playwright
     
     target_url = "https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell"
-    target_xpath = '//*[@id="FavoriteApp_ITEM"]'
+    # 使用文本选择器，更可靠
+    target_selector = 'text=主项目'
     
     try:
         p = await async_playwright().start()
@@ -165,15 +166,36 @@ async def navigate_to_manage_shell_async():
                     print()  # 换行
                     print(f"⏰ 第 {current_second} 秒：尝试点击元素...")
                     try:
-                        # 尝试查找并点击元素
-                        element = home_page.locator(f"xpath={target_xpath}").first
-                        if await element.is_visible(timeout=2000):
-                            await element.click()
-                            print(f"  ✓ 点击成功")
+                        # 尝试查找元素
+                        element = home_page.locator(target_selector).first
+                        
+                        # 检查元素数量
+                        count = await home_page.locator(target_selector).count()
+                        print(f"  找到 {count} 个匹配元素")
+                        
+                        if count > 0:
+                            # 等待元素可见
+                            try:
+                                await element.wait_for(state="visible", timeout=5000)
+                                print(f"  ✓ 元素已可见")
+                            except:
+                                print(f"  ⚠ 元素不可见，尝试强制点击")
+                            
+                            # 尝试点击
+                            try:
+                                await element.click(timeout=3000)
+                                print(f"  ✓ 点击成功")
+                            except Exception as click_err:
+                                # 如果普通点击失败，尝试强制点击
+                                try:
+                                    await element.click(force=True, timeout=3000)
+                                    print(f"  ✓ 强制点击成功")
+                                except Exception as force_err:
+                                    print(f"  ⚠ 点击失败: {force_err}")
                         else:
-                            print(f"  ⚠ 元素不可见")
+                            print(f"  ⚠ 未找到元素")
                     except Exception as e:
-                        print(f"  ⚠ 点击失败: {e}")
+                        print(f"  ⚠ 操作失败: {e}")
                 
                 await asyncio.sleep(1)
             
