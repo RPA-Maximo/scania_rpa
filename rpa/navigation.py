@@ -9,6 +9,7 @@ from typing import Tuple
 from playwright.async_api import Frame
 
 from .config import SELECTORS, WAIT_TIMES
+from .logger import logger, log_step
 
 
 async def click_menu_purchase(main_frame: Frame) -> None:
@@ -62,11 +63,36 @@ async def search_all_po(main_frame: Frame) -> Tuple[bool, str]:
     - 然后触发回车键事件
     - 这会查询所有采购单
     """
+    logger.debug(f"开始查找 PO 号输入框，模式: {SELECTORS.INPUT_PO_NUMBER_PATTERN}")
+    
     # 等待输入框出现
     waited = 0
     input_found = False
+    input_id = None
     
     while waited < WAIT_TIMES.INPUT_SEARCH_MAX_WAIT:
+        # 先检查所有 input 元素
+        all_inputs = await main_frame.evaluate("""
+            () => {
+                const inputs = document.querySelectorAll('input[role="textbox"]');
+                const result = [];
+                for (let input of inputs) {
+                    result.push({
+                        id: input.id,
+                        name: input.name,
+                        value: input.value,
+                        placeholder: input.placeholder
+                    });
+                }
+                return result;
+            }
+        """)
+        
+        logger.debug(f"找到 {len(all_inputs)} 个 input[role='textbox'] 元素")
+        for inp in all_inputs:
+            logger.debug(f"  - ID: {inp.get('id')}, Name: {inp.get('name')}")
+        
+        # 查找匹配的输入框
         result = await main_frame.evaluate(f"""
             () => {{
                 const inputs = document.querySelectorAll('input[role="textbox"]');
@@ -82,15 +108,19 @@ async def search_all_po(main_frame: Frame) -> Tuple[bool, str]:
         if result.get('found'):
             input_found = True
             input_id = result.get('id')
+            logger.success(f"找到 PO 号输入框: {input_id}")
             break
         
+        logger.debug(f"未找到匹配的输入框，等待 {WAIT_TIMES.INPUT_SEARCH_INTERVAL}s...")
         await asyncio.sleep(WAIT_TIMES.INPUT_SEARCH_INTERVAL)
         waited += WAIT_TIMES.INPUT_SEARCH_INTERVAL
     
     if not input_found:
+        logger.error(f"超时未找到 PO 号输入框 (等待了 {waited}s)")
         return False, "未找到 PO 号输入框"
     
     # 等待 1 秒
+    logger.debug("等待 1 秒后触发回车...")
     await asyncio.sleep(1)
     
     # 触发回车
@@ -141,8 +171,10 @@ async def search_all_po(main_frame: Frame) -> Tuple[bool, str]:
     """)
     
     if result.get('success'):
+        logger.success(f"已在输入框 {result.get('id')} 触发回车")
         return True, f"已在输入框 {result.get('id')} 触发回车"
     else:
+        logger.error("触发回车失败")
         return False, "触发回车失败"
 
 
