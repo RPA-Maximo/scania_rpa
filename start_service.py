@@ -154,20 +154,20 @@ async def navigate_to_manage_shell_async():
             
             # 等待页面加载
             print("⏳ 等待页面加载...")
-            await asyncio.sleep(5)
+            await asyncio.sleep(8)
             
-            # 获取 main frame
-            print("正在查找 main frame...")
+            # 查找包含菜单的 iframe (特征: URL 包含 "maximo/ui/" 和 "uisessionid")
+            print("正在查找菜单 iframe...")
             main_frame = None
             for frame in home_page.frames:
-                if 'main' in frame.url or 'manage-shell' in frame.url:
+                if "maximo/ui/" in frame.url and "uisessionid" in frame.url:
                     main_frame = frame
+                    print(f"✓ 找到菜单 iframe: {frame.url[:80]}...")
                     break
             
             if not main_frame:
+                print("⚠ 未找到菜单 iframe，使用 main_frame")
                 main_frame = home_page.main_frame
-            
-            print(f"✓ 找到 frame: {main_frame.url}")
             
             # 点击"采购"菜单
             print("正在点击'采购'菜单...")
