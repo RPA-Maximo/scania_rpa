@@ -243,43 +243,53 @@ def navigate_to_manage():
                     print(f"  ✗ 查找 Launch 链接失败：{e}")
                     return False
             
-            # 等待页面完全加载
+            # 等待页面完全加载并查找主 iframe
             print("  等待 Manage 页面加载...")
-            await asyncio.sleep(3)
             
-            # 查找主 iframe 并检查侧边栏
-            print("  检查侧边栏菜单...")
+            # 等待 iframe 出现（最多等待 60 秒）
+            max_wait = 60
+            waited = 0
             main_frame = None
-            for frame in maximo_page.frames:
-                if "maximo/ui/" in frame.url and "uisessionid" in frame.url:
-                    main_frame = frame
+            
+            print(f"  查找主 iframe（最多等待 {max_wait} 秒）...")
+            while waited < max_wait:
+                for frame in maximo_page.frames:
+                    if "maximo/ui/" in frame.url and "uisessionid" in frame.url:
+                        main_frame = frame
+                        break
+                
+                if main_frame:
+                    print(f"  ✓ 找到主 iframe（等待了 {waited} 秒）")
                     break
+                
+                await asyncio.sleep(2)
+                waited += 2
+                if waited % 10 == 0:
+                    print(f"    仍在等待... ({waited}s)")
             
             if not main_frame:
+                print(f"  ⚠ 未找到主 iframe，使用 main_frame")
                 main_frame = maximo_page.main_frame
             
-            # 检查侧边栏是否存在（查找"采购"菜单）
+            # 等待侧边栏菜单出现（使用 Playwright 的 wait_for_selector）
+            print("  等待侧边栏菜单加载...")
             try:
-                # 使用 rpa/config.py 中的选择器
                 from rpa.config import SELECTORS
                 
-                purchase_menu = await main_frame.evaluate(f"""
-                    () => {{
-                        const elem = document.getElementById('{SELECTORS.MENU_PURCHASE}');
-                        return elem !== null;
-                    }}
-                """)
+                # 使用 wait_for_selector 等待元素出现（最多等待 60 秒）
+                await main_frame.wait_for_selector(
+                    f'#{SELECTORS.MENU_PURCHASE}',
+                    state='attached',
+                    timeout=60000  # 60 秒超时
+                )
                 
-                if purchase_menu:
-                    print("  ✓ 侧边栏菜单已就绪")
-                    return True
-                else:
-                    print("  ✗ 未找到侧边栏菜单")
-                    print("  提示：请手动刷新页面或重新登录")
-                    return False
+                print("  ✓ 侧边栏菜单已就绪")
+                return True
                     
             except Exception as e:
-                print(f"  ✗ 检查侧边栏失败：{e}")
+                print(f"  ✗ 等待侧边栏菜单超时")
+                print(f"  详细错误：{e}")
+                print("  提示：页面加载时间过长，请检查网络或手动刷新页面")
                 return False
             
         except Exception as e:
