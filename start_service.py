@@ -153,8 +153,14 @@ async def navigate_to_manage_shell_async():
             print(f"✓ 导航成功：{target_url}")
             
             # 等待页面加载
-            print("⏳ 等待页面加载...")
-            await asyncio.sleep(8)
+            print("⏳ 等待页面加载 60 秒...")
+            await asyncio.sleep(60)
+            
+            # 列出所有 iframe 用于调试
+            print("\n所有 iframe:")
+            for i, frame in enumerate(home_page.frames):
+                print(f"  Frame {i}: {frame.url[:100]}")
+            print()
             
             # 查找包含菜单的 iframe (特征: URL 包含 "maximo/ui/" 和 "uisessionid")
             print("正在查找菜单 iframe...")
