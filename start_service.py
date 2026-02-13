@@ -166,20 +166,20 @@ async def navigate_to_manage_shell_async():
                 try:
                     print(f"尝试点击 ITEM 应用链接 (第 {attempt} 次)...")
                     
-                    # 使用 JavaScript 查找并点击元素
+                    # 先在主页面查找
                     result = await home_page.evaluate("""
                         () => {
                             const elem = document.getElementById('FavoriteApp_ITEM');
                             if (elem) {
                                 elem.click();
-                                return { success: true, found: true };
+                                return { success: true, found: true, location: 'main page' };
                             }
                             return { success: false, found: false };
                         }
                     """)
                     
                     if result.get('success'):
-                        print(f"✓ 成功点击 ITEM 应用链接")
+                        print(f"✓ 成功点击 ITEM 应用链接 (在主页面)")
                         
                         # 再等待 20 秒让 ITEM 应用加载
                         print("⏳ 等待 ITEM 应用加载...")
@@ -192,16 +192,50 @@ async def navigate_to_manage_shell_async():
                         await browser.close()
                         await p.stop()
                         return True
+                    
+                    # 如果主页面没找到，遍历所有 frames
+                    print("  在主页面未找到，正在检查 iframes...")
+                    for frame in home_page.frames:
+                        try:
+                            frame_result = await frame.evaluate("""
+                                () => {
+                                    const elem = document.getElementById('FavoriteApp_ITEM');
+                                    if (elem) {
+                                        elem.click();
+                                        return { success: true, found: true, url: window.location.href };
+                                    }
+                                    return { success: false, found: false };
+                                }
+                            """)
+                            
+                            if frame_result.get('success'):
+                                print(f"✓ 成功点击 ITEM 应用链接 (在 iframe: {frame_result.get('url', 'unknown')})")
+                                
+                                # 再等待 20 秒让 ITEM 应用加载
+                                print("⏳ 等待 ITEM 应用加载...")
+                                for i in range(20, 0, -1):
+                                    print(f"  剩余 {i} 秒...", end="\r", flush=True)
+                                    await asyncio.sleep(1)
+                                print()
+                                print("✓ 等待完成")
+                                
+                                await browser.close()
+                                await p.stop()
+                                return True
+                        except Exception as frame_error:
+                            # 某些 frame 可能无法访问，跳过
+                            continue
+                    
+                    # 所有 frames 都没找到
+                    if attempt < max_retries:
+                        print(f"⚠ 在所有 frames 中都未找到 ITEM 应用链接元素")
+                        print(f"  等待 10 秒后重试...")
+                        await asyncio.sleep(10)
                     else:
-                        if attempt < max_retries:
-                            print(f"⚠ 未找到 ITEM 应用链接元素")
-                            print(f"  等待 10 秒后重试...")
-                            await asyncio.sleep(10)
-                        else:
-                            print(f"⚠ 未找到 ITEM 应用链接元素 (已重试 {max_retries} 次)")
-                            await browser.close()
-                            await p.stop()
-                            return False
+                        print(f"⚠ 在所有 frames 中都未找到 ITEM 应用链接元素 (已重试 {max_retries} 次)")
+                        await browser.close()
+                        await p.stop()
+                        return False
                     
                 except Exception as e:
                     if attempt < max_retries:
