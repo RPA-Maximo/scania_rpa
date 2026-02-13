@@ -3,6 +3,7 @@ RPA 日志模块
 提供统一的日志记录功能和装饰器
 """
 import functools
+import inspect
 import time
 from typing import Any, Callable
 from enum import Enum
@@ -172,7 +173,7 @@ def log_function(func_name: str = None, log_args: bool = True, log_result: bool 
                 raise
         
         # 根据函数类型返回对应的包装器
-        if functools.iscoroutinefunction(func):
+        if inspect.iscoroutinefunction(func):
             return async_wrapper
         else:
             return sync_wrapper
@@ -266,7 +267,7 @@ def log_step(step_description: str):
                 logger.dedent()
                 raise
         
-        if functools.iscoroutinefunction(func):
+        if inspect.iscoroutinefunction(func):
             return async_wrapper
         else:
             return sync_wrapper
@@ -329,7 +330,7 @@ def log_workflow(workflow_name: str):
                 logger.error(f"错误: {str(e)}")
                 raise
         
-        if functools.iscoroutinefunction(func):
+        if inspect.iscoroutinefunction(func):
             return async_wrapper
         else:
             return sync_wrapper
