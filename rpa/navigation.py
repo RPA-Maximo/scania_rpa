@@ -49,168 +49,72 @@ async def check_if_on_receipts_search_page(main_frame: Frame) -> bool:
     return result
 
 
-async def force_navigate_to_receipts(main_frame: Frame) -> bool:
-    """
-    强制导航到接收查询页面
-    使用 Playwright 的键盘快捷键或直接操作 DOM
-    
-    Args:
-        main_frame: Playwright frame 对象
-    
-    Returns:
-        是否成功导航
-    """
-    logger.info("尝试强制导航到接收查询页面...")
-    
-    # 方法1: 尝试使用 Ctrl+Home 返回主页
-    logger.debug("方法1: 尝试 Ctrl+Home 返回主页")
-    try:
-        page = main_frame.page
-        await page.keyboard.press('Control+Home')
-        await asyncio.sleep(2)
-        
-        # 检查是否有菜单元素
-        has_menu = await main_frame.evaluate(f"""
-            () => {{
-                const elem = document.getElementById('{SELECTORS.MENU_PURCHASE}');
-                return elem !== null;
-            }}
-        """)
-        
-        if has_menu:
-            logger.success("成功返回主页，菜单元素已出现")
-            return True
-    except Exception as e:
-        logger.warning(f"Ctrl+Home 失败: {e}")
-    
-    # 方法2: 查找并点击"返回"或"关闭"按钮
-    logger.debug("方法2: 查找返回/关闭按钮")
-    try:
-        result = await main_frame.evaluate("""
-            () => {
-                // 查找所有可能的返回按钮
-                const buttons = document.querySelectorAll('img[src*="back"], img[src*="close"], img[src*="return"]');
-                for (let btn of buttons) {
-                    if (btn.parentElement && btn.parentElement.tagName === 'A') {
-                        btn.parentElement.click();
-                        return { success: true, method: 'button_click' };
-                    }
-                }
-                return { success: false };
-            }
-        """)
-        
-        if result.get('success'):
-            logger.success("找到并点击了返回按钮")
-            await asyncio.sleep(2)
-            return True
-    except Exception as e:
-        logger.warning(f"查找返回按钮失败: {e}")
-    
-    # 方法3: 尝试查找所有菜单项并点击采购
-    logger.debug("方法3: 查找所有菜单项")
-    try:
-        result = await main_frame.evaluate("""
-            () => {
-                // 查找所有包含"采购"文本的元素
-                const allElements = document.querySelectorAll('*');
-                for (let elem of allElements) {
-                    if (elem.textContent && elem.textContent.trim() === '采购' && elem.id) {
-                        elem.click();
-                        return { success: true, id: elem.id };
-                    }
-                }
-                return { success: false };
-            }
-        """)
-        
-        if result.get('success'):
-            logger.success(f"找到并点击了采购菜单: {result.get('id')}")
-            await asyncio.sleep(1)
-            return True
-    except Exception as e:
-        logger.warning(f"查找采购菜单失败: {e}")
-    
-    logger.error("所有强制导航方法均失败")
-    return False
-
-
-async def click_menu_purchase(main_frame: Frame) -> bool:
+async def click_menu_purchase(main_frame: Frame) -> None:
     """
     点击'采购'菜单
     
     Args:
         main_frame: Playwright frame 对象
     
-    Returns:
-        是否成功点击
-    
     LLM 提示：这是进入采购模块的第一步
     """
     logger.debug(f"尝试点击采购菜单，ID: {SELECTORS.MENU_PURCHASE}")
     
     # 检查元素是否存在
-    result = await main_frame.evaluate(f"""
+    exists = await main_frame.evaluate(f"""
         () => {{
             const elem = document.getElementById('{SELECTORS.MENU_PURCHASE}');
-            if (elem) {{
-                elem.click();
-                return {{ success: true, exists: true }};
-            }}
-            return {{ success: false, exists: false }};
+            return elem !== null;
         }}
     """)
     
-    if not result.get('exists'):
+    if not exists:
         logger.warning(f"采购菜单元素不存在 (ID: {SELECTORS.MENU_PURCHASE})")
-        return False
+    else:
+        logger.debug("采购菜单元素存在，执行点击")
     
-    if result.get('success'):
-        logger.debug("采购菜单元素存在，已执行点击")
-        await asyncio.sleep(WAIT_TIMES.AFTER_MENU_CLICK)
-        logger.debug(f"等待 {WAIT_TIMES.AFTER_MENU_CLICK}s 后完成")
-        return True
-    
-    return False
+    await main_frame.evaluate(f"""
+        () => {{
+            const elem = document.getElementById('{SELECTORS.MENU_PURCHASE}');
+            if (elem) elem.click();
+        }}
+    """)
+    await asyncio.sleep(WAIT_TIMES.AFTER_MENU_CLICK)
+    logger.debug(f"等待 {WAIT_TIMES.AFTER_MENU_CLICK}s 后完成")
 
 
-async def click_menu_receipts(main_frame: Frame) -> bool:
+async def click_menu_receipts(main_frame: Frame) -> None:
     """
     点击'接收'菜单
     
     Args:
         main_frame: Playwright frame 对象
     
-    Returns:
-        是否成功点击
-    
     LLM 提示：从采购模块进入接收页面
     """
     logger.debug(f"尝试点击接收菜单，ID: {SELECTORS.MENU_RECEIPTS}")
     
     # 检查元素是否存在
-    result = await main_frame.evaluate(f"""
+    exists = await main_frame.evaluate(f"""
         () => {{
             const elem = document.getElementById('{SELECTORS.MENU_RECEIPTS}');
-            if (elem) {{
-                elem.click();
-                return {{ success: true, exists: true }};
-            }}
-            return {{ success: false, exists: false }};
+            return elem !== null;
         }}
     """)
     
-    if not result.get('exists'):
+    if not exists:
         logger.warning(f"接收菜单元素不存在 (ID: {SELECTORS.MENU_RECEIPTS})")
-        return False
+    else:
+        logger.debug("接收菜单元素存在，执行点击")
     
-    if result.get('success'):
-        logger.debug("接收菜单元素存在，已执行点击")
-        await asyncio.sleep(WAIT_TIMES.AFTER_RECEIPTS_CLICK)
-        logger.debug(f"等待 {WAIT_TIMES.AFTER_RECEIPTS_CLICK}s 后完成")
-        return True
-    
-    return False
+    await main_frame.evaluate(f"""
+        () => {{
+            const elem = document.getElementById('{SELECTORS.MENU_RECEIPTS}');
+            if (elem) elem.click();
+        }}
+    """)
+    await asyncio.sleep(WAIT_TIMES.AFTER_RECEIPTS_CLICK)
+    logger.debug(f"等待 {WAIT_TIMES.AFTER_RECEIPTS_CLICK}s 后完成")
 
 
 async def search_all_po(main_frame: Frame) -> Tuple[bool, str]:

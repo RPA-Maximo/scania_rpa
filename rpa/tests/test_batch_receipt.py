@@ -16,7 +16,7 @@ from rpa.maximo_actions import (
     click_select_ordered_items,
     process_multiple_po_lines
 )
-from rpa.navigation import check_if_on_receipts_search_page, get_current_page_title, force_navigate_to_receipts
+from rpa.navigation import check_if_on_receipts_search_page, get_current_page_title
 from rpa.logger import logger, log_workflow
 
 
@@ -70,35 +70,21 @@ async def batch_receipt_workflow(po_number="CN5123", po_lines_data=None, auto_sa
             # === 导航到接收查询页面 ===
             logger.subsection(f"导航到接收查询页面")
             
-            # 先尝试强制导航
-            if await force_navigate_to_receipts(main_frame):
-                logger.success("强制导航成功")
-                # 检查是否有菜单
-                await asyncio.sleep(1)
-            
             logger.step(1, 6, "点击'采购'菜单")
             try:
-                success = await click_menu_purchase(main_frame)
-                if success:
-                    logger.success("完成")
-                else:
-                    logger.error("采购菜单不可用")
-                    # 不要立即失败，继续尝试
+                await click_menu_purchase(main_frame)
+                logger.success("完成")
             except Exception as e:
                 logger.error(f"失败: {e}")
-                # 不要立即失败，继续尝试
+                raise
             
             logger.step(2, 6, "点击'接收'")
             try:
-                success = await click_menu_receipts(main_frame)
-                if success:
-                    logger.success("完成")
-                else:
-                    logger.error("接收菜单不可用")
-                    # 不要立即失败，继续尝试
+                await click_menu_receipts(main_frame)
+                logger.success("完成")
             except Exception as e:
                 logger.error(f"失败: {e}")
-                # 不要立即失败，继续尝试
+                raise
             
             # 再次检查是否到达接收查询页面
             logger.info("验证是否到达接收查询页面...")
