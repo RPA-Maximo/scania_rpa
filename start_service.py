@@ -131,6 +131,7 @@ async def navigate_to_manage_shell_async():
     from playwright.async_api import async_playwright
     
     target_url = "https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell"
+    target_xpath = '//*[@id="m1099c4c7-content"]/tbody/tr[2]/td[2]'
     
     try:
         p = await async_playwright().start()
@@ -151,11 +152,31 @@ async def navigate_to_manage_shell_async():
             await home_page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
             print(f"✓ 导航成功：{target_url}")
             
-            # 等待 60 秒
+            # 等待 60 秒，并在第 40、50、60 秒时尝试点击元素
             print("⏳ 等待 60 秒让页面完全加载...")
+            click_times = [40, 50, 60]  # 在这些秒数时尝试点击
+            
             for i in range(60, 0, -1):
+                current_second = 61 - i  # 当前经过的秒数
                 print(f"  剩余 {i} 秒...", end="\r", flush=True)
+                
+                # 检查是否到达点击时间
+                if current_second in click_times:
+                    print()  # 换行
+                    print(f"⏰ 第 {current_second} 秒：尝试点击元素...")
+                    try:
+                        # 尝试查找并点击元素
+                        element = await home_page.locator(f"xpath={target_xpath}").first
+                        if await element.is_visible(timeout=2000):
+                            await element.click()
+                            print(f"  ✓ 点击成功")
+                        else:
+                            print(f"  ⚠ 元素不可见")
+                    except Exception as e:
+                        print(f"  ⚠ 点击失败: {e}")
+                
                 await asyncio.sleep(1)
+            
             print()
             print("✓ 等待完成")
             
