@@ -131,7 +131,7 @@ async def navigate_to_manage_shell_async():
     from playwright.async_api import async_playwright
     
     target_url = "https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell"
-    target_xpath = '//*[@id="m1099c4c7-content"]/tbody/tr[2]/td[2]'
+    target_xpath = '//*[@id="FavoriteApp_ITEM"]'
     
     try:
         p = await async_playwright().start()
@@ -166,7 +166,7 @@ async def navigate_to_manage_shell_async():
                     print(f"⏰ 第 {current_second} 秒：尝试点击元素...")
                     try:
                         # 尝试查找并点击元素
-                        element = await home_page.locator(f"xpath={target_xpath}").first
+                        element = home_page.locator(f"xpath={target_xpath}").first
                         if await element.is_visible(timeout=2000):
                             await element.click()
                             print(f"  ✓ 点击成功")
