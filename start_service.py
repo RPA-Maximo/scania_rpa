@@ -127,7 +127,7 @@ def navigate_to_manage_shell(page_id: str):
 
 
 async def navigate_to_manage_shell_async():
-    """使用 Playwright 导航到 manage-shell 并执行 JavaScript 跳转到 ITEM 应用"""
+    """使用 Playwright 导航到 manage-shell 并点击 ITEM 应用链接"""
     from playwright.async_api import async_playwright
     
     target_url = "https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell"
@@ -160,33 +160,56 @@ async def navigate_to_manage_shell_async():
                 await asyncio.sleep(1)
             print()
             
-            # 尝试执行 JavaScript 跳转到 ITEM 应用（最多重试 3 次）
+            # 尝试点击 ITEM 应用链接（最多重试 3 次）
             max_retries = 3
             for attempt in range(1, max_retries + 1):
                 try:
-                    print(f"尝试执行跳转命令 (第 {attempt} 次)...")
-                    await home_page.evaluate("sendEvent('changeapp','startcntr','ITEM',3);")
-                    print(f"✓ 跳转命令执行成功")
+                    print(f"尝试点击 ITEM 应用链接 (第 {attempt} 次)...")
                     
-                    # 再等待 20 秒让 ITEM 应用加载
-                    print("⏳ 等待 ITEM 应用加载...")
-                    for i in range(20, 0, -1):
-                        print(f"  剩余 {i} 秒...", end="\r", flush=True)
-                        await asyncio.sleep(1)
-                    print()
-                    print("✓ 等待完成")
+                    # 使用 JavaScript 查找并点击元素
+                    result = await home_page.evaluate("""
+                        () => {
+                            const elem = document.getElementById('FavoriteApp_ITEM');
+                            if (elem) {
+                                elem.click();
+                                return { success: true, found: true };
+                            }
+                            return { success: false, found: false };
+                        }
+                    """)
                     
-                    await browser.close()
-                    await p.stop()
-                    return True
+                    if result.get('success'):
+                        print(f"✓ 成功点击 ITEM 应用链接")
+                        
+                        # 再等待 20 秒让 ITEM 应用加载
+                        print("⏳ 等待 ITEM 应用加载...")
+                        for i in range(20, 0, -1):
+                            print(f"  剩余 {i} 秒...", end="\r", flush=True)
+                            await asyncio.sleep(1)
+                        print()
+                        print("✓ 等待完成")
+                        
+                        await browser.close()
+                        await p.stop()
+                        return True
+                    else:
+                        if attempt < max_retries:
+                            print(f"⚠ 未找到 ITEM 应用链接元素")
+                            print(f"  等待 10 秒后重试...")
+                            await asyncio.sleep(10)
+                        else:
+                            print(f"⚠ 未找到 ITEM 应用链接元素 (已重试 {max_retries} 次)")
+                            await browser.close()
+                            await p.stop()
+                            return False
                     
                 except Exception as e:
                     if attempt < max_retries:
-                        print(f"⚠ 执行失败: {e}")
+                        print(f"⚠ 点击失败: {e}")
                         print(f"  等待 10 秒后重试...")
                         await asyncio.sleep(10)
                     else:
-                        print(f"⚠ 执行失败 (已重试 {max_retries} 次): {e}")
+                        print(f"⚠ 点击失败 (已重试 {max_retries} 次): {e}")
                         await browser.close()
                         await p.stop()
                         return False
