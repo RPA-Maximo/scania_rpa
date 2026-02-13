@@ -94,7 +94,8 @@ async def find_and_check_po_line(
                 }
             
             # 获取按钮的父元素 <a> 标签
-            next_button_link = next_button_img.locator('..').first
+            # 使用 last 而不是 first，因为弹出窗口通常是最后加载的（在最上层）
+            next_button_link = next_button_img.locator('..').last
             
             # 滚动到按钮
             await next_button_link.scroll_into_view_if_needed()
