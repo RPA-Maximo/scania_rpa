@@ -127,10 +127,8 @@ def navigate_to_manage_shell(page_id: str):
 
 
 async def navigate_to_manage_shell_async():
-    """使用 Playwright 导航到 manage-shell 页面"""
+    """使用 Playwright 执行 JavaScript 跳转到 ITEM 应用"""
     from playwright.async_api import async_playwright
-    
-    target_url = "https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell"
     
     try:
         p = await async_playwright().start()
@@ -147,9 +145,11 @@ async def navigate_to_manage_shell_async():
                 break
         
         if home_page:
-            print(f"✓ 找到 home 页面，正在导航...")
-            await home_page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
-            print(f"✓ 导航成功：{target_url}")
+            print(f"✓ 找到 home 页面，正在执行跳转...")
+            
+            # 执行 JavaScript 跳转到 ITEM 应用
+            await home_page.evaluate("sendEvent('changeapp','startcntr','ITEM',3);")
+            print(f"✓ 已执行跳转命令")
             
             # 等待 60 秒
             print("⏳ 等待 60 秒让页面完全加载...")
@@ -302,20 +302,19 @@ def main():
         # 检查是否在 home 页面，如果是则跳转到 manage-shell
         if url and 'main.home.scania-acc.suite.maximo.com' in url:
             print()
-            print("检测到 home 页面，正在跳转到 manage-shell...")
+            print("检测到 home 页面，正在跳转到 ITEM 应用...")
             
             # 使用异步函数导航
             try:
                 success = asyncio.run(navigate_to_manage_shell_async())
                 if not success:
                     print("⚠ 自动跳转失败，请手动导航")
-                    print("  目标地址：https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell")
+                    print("  请在浏览器中手动打开 ITEM 应用")
                     print()
                     input("完成后按回车键继续...")
             except Exception as e:
                 print(f"⚠ 跳转过程出现问题: {e}")
-                print("  请手动在浏览器中导航到 manage-shell 页面")
-                print("  目标地址：https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell")
+                print("  请在浏览器中手动打开 ITEM 应用")
                 print()
                 input("完成后按回车键继续...")
     else:
