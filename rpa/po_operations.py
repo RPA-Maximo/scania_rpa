@@ -83,6 +83,16 @@ async def find_and_check_po_line(
             # 查找所有包含 "next_on.gif" 的图片（表示下一页按钮可用）
             next_button_img = main_frame.locator(f'img[src*="{SELECTORS.NEXT_PAGE_BUTTON_IMAGE}"]')
             
+            # 等待按钮出现并稳定
+            try:
+                await next_button_img.last.wait_for(state='visible', timeout=3000)
+            except:
+                # 没有可用的下一页按钮，可能已经是最后一页
+                return {
+                    'success': False,
+                    'message': f'未找到{search_type} {search_key}（已到最后一页，共翻 {page_num + 1} 页）'
+                }
+            
             # 检查按钮是否存在
             count = await next_button_img.count()
             
@@ -97,15 +107,26 @@ async def find_and_check_po_line(
             # 使用 last 而不是 first，因为弹出窗口通常是最后加载的（在最上层）
             next_button_link = next_button_img.locator('..').last
             
-            # 滚动到按钮
-            await next_button_link.scroll_into_view_if_needed()
+            # 等待元素稳定后再滚动
             await asyncio.sleep(WAIT_TIMES.SCROLL_DELAY)
             
-            # 点击按钮
+            # 使用更安全的方式滚动和点击
+            try:
+                await next_button_link.scroll_into_view_if_needed(timeout=3000)
+                await asyncio.sleep(WAIT_TIMES.SCROLL_DELAY)
+            except:
+                # 如果滚动失败，尝试直接点击
+                pass
+            
+            # 点击按钮前再次确认元素可见
+            await next_button_link.wait_for(state='visible', timeout=3000)
             await next_button_link.click(force=True)
             
-            # 等待页面加载
+            # 等待页面加载完成
             await asyncio.sleep(WAIT_TIMES.AFTER_PAGE_TURN)
+            
+            # 额外等待确保 DOM 稳定
+            await asyncio.sleep(0.5)
             
         except Exception as e:
             return {
