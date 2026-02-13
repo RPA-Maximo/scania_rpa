@@ -127,7 +127,7 @@ def navigate_to_manage_shell(page_id: str):
 
 
 async def navigate_to_manage_shell_async():
-    """使用 Playwright 导航到 manage-shell 并点击 ITEM 应用链接"""
+    """使用 Playwright 导航到 manage-shell 页面"""
     from playwright.async_api import async_playwright
     
     target_url = "https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell"
@@ -147,106 +147,21 @@ async def navigate_to_manage_shell_async():
                 break
         
         if home_page:
-            print(f"✓ 找到 home 页面，正在导航到 manage-shell...")
-            
-            # 先导航到 manage-shell
+            print(f"✓ 找到 home 页面，正在导航...")
             await home_page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
             print(f"✓ 导航成功：{target_url}")
             
-            # 等待 40 秒让页面加载
-            print("⏳ 等待页面加载...")
-            for i in range(40, 0, -1):
+            # 等待 60 秒
+            print("⏳ 等待 60 秒让页面完全加载...")
+            for i in range(60, 0, -1):
                 print(f"  剩余 {i} 秒...", end="\r", flush=True)
                 await asyncio.sleep(1)
             print()
+            print("✓ 等待完成")
             
-            # 尝试点击 ITEM 应用链接（最多重试 3 次）
-            max_retries = 3
-            for attempt in range(1, max_retries + 1):
-                try:
-                    print(f"尝试点击 ITEM 应用链接 (第 {attempt} 次)...")
-                    
-                    # 先在主页面查找
-                    result = await home_page.evaluate("""
-                        () => {
-                            const elem = document.getElementById('FavoriteApp_ITEM');
-                            if (elem) {
-                                elem.click();
-                                return { success: true, found: true, location: 'main page' };
-                            }
-                            return { success: false, found: false };
-                        }
-                    """)
-                    
-                    if result.get('success'):
-                        print(f"✓ 成功点击 ITEM 应用链接 (在主页面)")
-                        
-                        # 再等待 20 秒让 ITEM 应用加载
-                        print("⏳ 等待 ITEM 应用加载...")
-                        for i in range(20, 0, -1):
-                            print(f"  剩余 {i} 秒...", end="\r", flush=True)
-                            await asyncio.sleep(1)
-                        print()
-                        print("✓ 等待完成")
-                        
-                        await browser.close()
-                        await p.stop()
-                        return True
-                    
-                    # 如果主页面没找到，遍历所有 frames
-                    print("  在主页面未找到，正在检查 iframes...")
-                    for frame in home_page.frames:
-                        try:
-                            frame_result = await frame.evaluate("""
-                                () => {
-                                    const elem = document.getElementById('FavoriteApp_ITEM');
-                                    if (elem) {
-                                        elem.click();
-                                        return { success: true, found: true, url: window.location.href };
-                                    }
-                                    return { success: false, found: false };
-                                }
-                            """)
-                            
-                            if frame_result.get('success'):
-                                print(f"✓ 成功点击 ITEM 应用链接 (在 iframe: {frame_result.get('url', 'unknown')})")
-                                
-                                # 再等待 20 秒让 ITEM 应用加载
-                                print("⏳ 等待 ITEM 应用加载...")
-                                for i in range(20, 0, -1):
-                                    print(f"  剩余 {i} 秒...", end="\r", flush=True)
-                                    await asyncio.sleep(1)
-                                print()
-                                print("✓ 等待完成")
-                                
-                                await browser.close()
-                                await p.stop()
-                                return True
-                        except Exception as frame_error:
-                            # 某些 frame 可能无法访问，跳过
-                            continue
-                    
-                    # 所有 frames 都没找到
-                    if attempt < max_retries:
-                        print(f"⚠ 在所有 frames 中都未找到 ITEM 应用链接元素")
-                        print(f"  等待 10 秒后重试...")
-                        await asyncio.sleep(10)
-                    else:
-                        print(f"⚠ 在所有 frames 中都未找到 ITEM 应用链接元素 (已重试 {max_retries} 次)")
-                        await browser.close()
-                        await p.stop()
-                        return False
-                    
-                except Exception as e:
-                    if attempt < max_retries:
-                        print(f"⚠ 点击失败: {e}")
-                        print(f"  等待 10 秒后重试...")
-                        await asyncio.sleep(10)
-                    else:
-                        print(f"⚠ 点击失败 (已重试 {max_retries} 次): {e}")
-                        await browser.close()
-                        await p.stop()
-                        return False
+            await browser.close()
+            await p.stop()
+            return True
         else:
             print("⚠ 未找到 home 页面")
             await browser.close()
@@ -387,19 +302,20 @@ def main():
         # 检查是否在 home 页面，如果是则跳转到 manage-shell
         if url and 'main.home.scania-acc.suite.maximo.com' in url:
             print()
-            print("检测到 home 页面，正在跳转到 ITEM 应用...")
+            print("检测到 home 页面，正在跳转到 manage-shell...")
             
             # 使用异步函数导航
             try:
                 success = asyncio.run(navigate_to_manage_shell_async())
                 if not success:
                     print("⚠ 自动跳转失败，请手动导航")
-                    print("  请在浏览器中手动打开 ITEM 应用")
+                    print("  目标地址：https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell")
                     print()
                     input("完成后按回车键继续...")
             except Exception as e:
                 print(f"⚠ 跳转过程出现问题: {e}")
-                print("  请在浏览器中手动打开 ITEM 应用")
+                print("  请手动在浏览器中导航到 manage-shell 页面")
+                print("  目标地址：https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell")
                 print()
                 input("完成后按回车键继续...")
     else:
