@@ -15,6 +15,7 @@ import os
 import sys
 import time
 import requests
+import asyncio
 from pathlib import Path
 
 # 添加项目根目录到路径
@@ -27,6 +28,10 @@ from config.browser import (
     DEBUG_PORT,
     MAXIMO_LOGIN_URL
 )
+
+# Windows 平台需要设置事件循环策略
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 
 # API 配置
@@ -97,6 +102,75 @@ def check_maximo_logged_in():
         return False, None
     except:
         return False, None
+
+
+def navigate_to_manage_shell(page_id: str):
+    """导航到 manage-shell 页面"""
+    target_url = "https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell"
+    
+    try:
+        # 使用 CDP 协议导航页面
+        response = requests.post(
+            f"http://localhost:{DEBUG_PORT}/json",
+            json={
+                "method": "Page.navigate",
+                "params": {
+                    "url": target_url
+                }
+            },
+            timeout=5
+        )
+        return True
+    except Exception as e:
+        print(f"⚠ 导航失败: {e}")
+        return False
+
+
+async def navigate_to_manage_shell_async():
+    """使用 Playwright 导航到 manage-shell 页面"""
+    from playwright.async_api import async_playwright
+    
+    target_url = "https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell"
+    
+    try:
+        p = await async_playwright().start()
+        browser = await p.chromium.connect_over_cdp(f"http://localhost:{DEBUG_PORT}")
+        
+        # 查找 home 页面
+        home_page = None
+        for context in browser.contexts:
+            for page in context.pages:
+                if "main.home.scania-acc.suite.maximo.com" in page.url:
+                    home_page = page
+                    break
+            if home_page:
+                break
+        
+        if home_page:
+            print(f"✓ 找到 home 页面，正在导航...")
+            await home_page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+            print(f"✓ 导航成功：{target_url}")
+            
+            # 等待 60 秒
+            print("⏳ 等待 60 秒让页面完全加载...")
+            for i in range(60, 0, -1):
+                print(f"  剩余 {i} 秒...", end="\r", flush=True)
+                await asyncio.sleep(1)
+            print()
+            print("✓ 等待完成")
+            
+            await browser.close()
+            await p.stop()
+            return True
+        else:
+            print("⚠ 未找到 home 页面")
+            await browser.close()
+            await p.stop()
+            return False
+            
+    except Exception as e:
+        print(f"⚠ 导航失败: {e}")
+        return False
 
 
 def start_browser():
@@ -224,6 +298,26 @@ def main():
     if logged_in:
         print(f"✓ 已登录 Maximo")
         print(f"  当前页面：{url}")
+        
+        # 检查是否在 home 页面，如果是则跳转到 manage-shell
+        if url and 'main.home.scania-acc.suite.maximo.com' in url:
+            print()
+            print("检测到 home 页面，正在跳转到 manage-shell...")
+            
+            # 使用异步函数导航
+            try:
+                success = asyncio.run(navigate_to_manage_shell_async())
+                if not success:
+                    print("⚠ 自动跳转失败，请手动导航")
+                    print("  目标地址：https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell")
+                    print()
+                    input("完成后按回车键继续...")
+            except Exception as e:
+                print(f"⚠ 跳转过程出现问题: {e}")
+                print("  请手动在浏览器中导航到 manage-shell 页面")
+                print("  目标地址：https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell")
+                print()
+                input("完成后按回车键继续...")
     else:
         if url:
             print(f"⚠ 检测到登录页面：{url}")
