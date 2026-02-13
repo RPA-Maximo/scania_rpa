@@ -100,7 +100,18 @@ async def create_receipt(request: ReceiptRequest):
     通过 subprocess 调用 RPA 脚本批量处理入库操作
     支持按 PO 行号或项目号查找
     """
+    print("\n" + "=" * 80)
+    print("FastAPI: 收到入库请求")
+    print("=" * 80)
+    
     try:
+        print(f"\n[1/5] 请求参数:")
+        print(f"  - PO 单号: {request.po_number}")
+        print(f"  - 自动保存: {request.auto_save}")
+        print(f"  - 入库项数量: {len(request.items)}")
+        for idx, item in enumerate(request.items, 1):
+            print(f"    {idx}. PO行={item.po_line}, 项目号={item.item_num}, 数量={item.quantity}, 备注={item.remark}")
+        
         # 转换数据格式（将 float 转为字符串格式）
         po_lines_data = [
             {
@@ -119,10 +130,17 @@ async def create_receipt(request: ReceiptRequest):
             'auto_save': request.auto_save
         }
         
+        print(f"\n[2/5] 准备调用 RPA 服务:")
+        print(f"  输入数据: {json.dumps(rpa_input, ensure_ascii=False, indent=2)}")
+        
         # 调用 RPA 服务脚本
         rpa_service_path = PROJECT_ROOT / "api" / "rpa_service.py"
+        print(f"  RPA 脚本路径: {rpa_service_path}")
+        print(f"  Python 解释器: {sys.executable}")
+        print(f"  工作目录: {PROJECT_ROOT}")
         
         # 使用 subprocess 调用
+        print(f"\n[3/5] 执行 RPA 脚本...")
         result = subprocess.run(
             [sys.executable, str(rpa_service_path)],
             input=json.dumps(rpa_input),
@@ -132,25 +150,46 @@ async def create_receipt(request: ReceiptRequest):
             cwd=str(PROJECT_ROOT)
         )
         
+        print(f"\n[4/5] RPA 脚本执行完成:")
+        print(f"  返回码: {result.returncode}")
+        print(f"  标准输出长度: {len(result.stdout)} 字符")
+        print(f"  标准错误长度: {len(result.stderr)} 字符")
+        
+        if result.stderr:
+            print(f"\n  标准错误输出 (stderr):")
+            print("  " + "-" * 76)
+            for line in result.stderr.split('\n'):
+                print(f"  {line}")
+            print("  " + "-" * 76)
+        
         if result.returncode != 0:
             # 脚本执行失败
             error_msg = result.stderr or result.stdout or "RPA 脚本执行失败"
+            print(f"\n✗ RPA 脚本执行失败 (返回码 {result.returncode})")
             raise HTTPException(
                 status_code=500,
                 detail=f"RPA 执行失败: {error_msg}"
             )
         
         # 解析输出
+        print(f"\n  标准输出 (stdout):")
+        print(f"  {result.stdout[:500]}..." if len(result.stdout) > 500 else f"  {result.stdout}")
+        
         try:
             rpa_result = json.loads(result.stdout)
-        except json.JSONDecodeError:
+            print(f"\n  解析后的结果:")
+            print(f"  {json.dumps(rpa_result, ensure_ascii=False, indent=2)}")
+        except json.JSONDecodeError as e:
+            print(f"\n✗ 无法解析 RPA 输出: {e}")
+            print(f"  原始输出: {result.stdout}")
             raise HTTPException(
                 status_code=500,
                 detail=f"无法解析 RPA 输出: {result.stdout}"
             )
         
         # 构造响应
-        return ReceiptResponse(
+        print(f"\n[5/5] 构造响应:")
+        response = ReceiptResponse(
             success=rpa_result.get('success', False),
             message="入库完成" if rpa_result.get('success') else "入库失败",
             po_number=request.po_number,
@@ -160,13 +199,25 @@ async def create_receipt(request: ReceiptRequest):
             saved=rpa_result.get('saved'),
             details=rpa_result.get('results', [])
         )
+        print(f"  响应: {response.model_dump()}")
+        print("\n" + "=" * 80)
+        print("FastAPI: 请求处理完成")
+        print("=" * 80 + "\n")
+        
+        return response
         
     except subprocess.TimeoutExpired:
+        print(f"\n✗ RPA 执行超时（超过180秒）")
         raise HTTPException(
             status_code=504,
             detail="RPA 执行超时（超过180秒）"
         )
+    except HTTPException:
+        raise
     except Exception as e:
+        print(f"\n✗ 发生异常: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
             detail=f"入库操作失败: {str(e)}"
