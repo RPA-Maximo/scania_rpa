@@ -243,77 +243,15 @@ def navigate_to_manage():
                     print(f"  ✗ 查找 Launch 链接失败：{e}")
                     return False
             
-            # 等待页面完全加载并查找主 iframe
-            print("  等待 Manage 页面加载...")
+            # 等待页面跳转完成
+            print("  等待页面跳转...")
+            await asyncio.sleep(5)
             
-            # 等待 iframe 出现（最多等待 60 秒）
-            max_wait = 60
-            waited = 0
-            main_frame = None
-            
-            print(f"  查找主 iframe（最多等待 {max_wait} 秒）...")
-            while waited < max_wait:
-                for frame in maximo_page.frames:
-                    if "maximo/ui/" in frame.url and "uisessionid" in frame.url:
-                        main_frame = frame
-                        break
-                
-                if main_frame:
-                    print(f"  ✓ 找到主 iframe（等待了 {waited} 秒）")
-                    break
-                
-                await asyncio.sleep(2)
-                waited += 2
-                if waited % 10 == 0:
-                    print(f"    仍在等待 iframe... ({waited}s)")
-            
-            if not main_frame:
-                print(f"  ⚠ 未找到主 iframe，使用 main_frame")
-                main_frame = maximo_page.main_frame
-            
-            # 等待侧边栏菜单出现
-            print("  等待侧边栏菜单加载...")
-            try:
-                from rpa.config import SELECTORS
-                
-                # 使用轮询方式检查元素（因为 wait_for_selector 在 iframe 中可能不稳定）
-                menu_found = False
-                waited = 0
-                max_menu_wait = 60
-                
-                while waited < max_menu_wait:
-                    try:
-                        # 使用 evaluate 检查元素是否存在
-                        purchase_menu_exists = await main_frame.evaluate(f"""
-                            () => {{
-                                const elem = document.getElementById('{SELECTORS.MENU_PURCHASE}');
-                                return elem !== null;
-                            }}
-                        """)
-                        
-                        if purchase_menu_exists:
-                            menu_found = True
-                            print(f"  ✓ 侧边栏菜单已就绪（等待了 {waited} 秒）")
-                            break
-                    except Exception:
-                        pass  # 继续等待
-                    
-                    await asyncio.sleep(2)
-                    waited += 2
-                    if waited % 10 == 0:
-                        print(f"    仍在等待侧边栏... ({waited}s)")
-                
-                if menu_found:
-                    return True
-                else:
-                    print(f"  ✗ 等待侧边栏菜单超时（{max_menu_wait}秒）")
-                    print("  提示：页面加载时间过长，请检查网络或手动刷新页面")
-                    return False
-                    
-            except Exception as e:
-                print(f"  ✗ 检查侧边栏菜单失败")
-                print(f"  详细错误：{e}")
-                return False
+            print(f"  ✓ 已导航到 Manage 页面")
+            print(f"  当前 URL: {maximo_page.url}")
+            print()
+            print("  提示：侧边栏将在首次 API 调用时自动验证")
+            return True
             
         except Exception as e:
             print(f"✗ 导航失败：{e}")
