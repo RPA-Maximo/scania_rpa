@@ -47,6 +47,9 @@ DEBUG_PORT = 9223
 # Maximo 登录页面
 MAXIMO_LOGIN_URL = "https://auth.scania-acc.suite.maximo.com/login/#/form"
 
+# Maximo Manage Shell 页面（登录后直接进入管理界面）
+MAXIMO_MANAGE_URL = "https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell"
+
 # CDP URL
 CDP_URL = f"http://localhost:{DEBUG_PORT}"
 

@@ -16,6 +16,7 @@ from rpa.maximo_actions import (
     click_select_ordered_items,
     process_multiple_po_lines
 )
+from rpa.navigation import ensure_in_manage_page
 
 
 async def batch_receipt_workflow(po_number="CN5123", po_lines_data=None, auto_save=False):
@@ -47,6 +48,20 @@ async def batch_receipt_workflow(po_number="CN5123", po_lines_data=None, auto_sa
         p, browser, maximo_page, main_frame = await connect_to_browser()
         print("✓ 成功连接到浏览器")
         print(f"当前页面: {await maximo_page.title()}\n")
+        
+        # === 检查页面状态 ===
+        print("检查页面状态...")
+        is_ready, state_msg, main_frame = await ensure_in_manage_page(maximo_page, main_frame)
+        if not is_ready:
+            print(f"✗ {state_msg}")
+            return {
+                'success': False,
+                'total': len(po_lines_data),
+                'processed': 0,
+                'failed': len(po_lines_data),
+                'error': state_msg
+            }
+        print(f"✓ {state_msg}\n")
         
         # === 打开采购单详情页 ===
         print(f"=== 打开采购单 {po_number} ===\n")

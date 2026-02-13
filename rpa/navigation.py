@@ -311,3 +311,107 @@ async def click_save_button(main_frame: Frame) -> bool:
         await asyncio.sleep(WAIT_TIMES.AFTER_SAVE_CLICK)
     
     return result.get('success')
+
+
+
+async def check_page_state(main_frame: Frame) -> Tuple[bool, str]:
+    """
+    检查当前页面状态，判断是否在 Manage 页面
+    
+    Args:
+        main_frame: Playwright frame 对象
+    
+    Returns:
+        (是否在正确页面, 状态描述)
+    
+    LLM 提示：
+    - 通过检查侧边栏菜单元素来判断是否在 Manage 页面
+    - 如果找到"采购"菜单，说明在正确的页面
+    """
+    result = await main_frame.evaluate(f"""
+        () => {{
+            const purchaseMenu = document.getElementById('{SELECTORS.MENU_PURCHASE}');
+            if (purchaseMenu) {{
+                return {{ found: true, message: '已在 Manage 页面' }};
+            }}
+            return {{ found: false, message: '未找到侧边栏菜单' }};
+        }}
+    """)
+    
+    return result.get('found', False), result.get('message', '未知状态')
+
+
+async def ensure_in_manage_page(page, main_frame: Frame) -> Tuple[bool, str, Frame]:
+    """
+    确保浏览器在 Manage 页面，如果不在则自动导航
+    
+    Args:
+        page: Playwright Page 对象
+        main_frame: Playwright frame 对象
+    
+    Returns:
+        (是否成功, 消息, 更新后的 main_frame)
+    
+    LLM 提示：
+    - 先检查当前页面状态
+    - 如果不在 Manage 页面，自动导航过去
+    - 导航后重新查找 main_frame
+    """
+    from .browser import _find_main_frame
+    
+    # 检查当前页面状态
+    is_ready, state_msg = await check_page_state(main_frame)
+    
+    if is_ready:
+        return True, state_msg, main_frame
+    
+    # 检查当前URL
+    current_url = page.url
+    
+    # 如果在登录页，无法自动处理
+    if "login" in current_url.lower() or "auth" in current_url.lower():
+        return False, "浏览器在登录页面，请先登录 Maximo", main_frame
+    
+    # 如果不在 manage 页面，尝试自动导航
+    if "manage" not in current_url.lower():
+        manage_url = "https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell"
+        
+        try:
+            # 导航到 manage 页面
+            await page.goto(manage_url, wait_until="domcontentloaded", timeout=30000)
+            
+            # 等待页面加载
+            await asyncio.sleep(3)
+            
+            # 重新查找 main_frame
+            main_frame = _find_main_frame(page)
+            
+            # 再次检查页面状态
+            is_ready, state_msg = await check_page_state(main_frame)
+            
+            if is_ready:
+                return True, f"已自动导航到 Manage 页面", main_frame
+            else:
+                return False, f"导航到 Manage 页面后仍未找到侧边栏菜单，请刷新页面", main_frame
+                
+        except Exception as e:
+            return False, f"自动导航失败：{str(e)}\n请手动导航到 Manage 页面", main_frame
+    
+    # 在 manage 页面但找不到菜单，尝试刷新
+    try:
+        await page.reload(wait_until="domcontentloaded", timeout=30000)
+        await asyncio.sleep(3)
+        
+        # 重新查找 main_frame
+        main_frame = _find_main_frame(page)
+        
+        # 再次检查
+        is_ready, state_msg = await check_page_state(main_frame)
+        
+        if is_ready:
+            return True, "页面已刷新，侧边栏菜单已就绪", main_frame
+        else:
+            return False, "刷新页面后仍未找到侧边栏菜单，请重新登录", main_frame
+            
+    except Exception as e:
+        return False, f"刷新页面失败：{str(e)}", main_frame

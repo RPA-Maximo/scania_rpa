@@ -28,7 +28,8 @@ from config.browser import (
     BROWSER_NAME,
     USER_DATA_DIR,
     DEBUG_PORT,
-    MAXIMO_LOGIN_URL
+    MAXIMO_LOGIN_URL,
+    MAXIMO_MANAGE_URL
 )
 
 
@@ -67,8 +68,12 @@ def kill_edge_processes():
         return False
 
 
-def start_browser():
-    """启动 Edge 浏览器（调试模式）"""
+def start_browser(use_manage_url=False):
+    """启动 Edge 浏览器（调试模式）
+    
+    Args:
+        use_manage_url: 是否直接打开 manage 页面（需要已登录）
+    """
     
     # 检查浏览器是否存在
     if not BROWSER_PATH or not os.path.exists(BROWSER_PATH):
@@ -84,10 +89,15 @@ def start_browser():
         print(f"  如需重启，请先关闭浏览器")
         return True
     
+    # 选择启动URL
+    start_url = MAXIMO_MANAGE_URL if use_manage_url else MAXIMO_LOGIN_URL
+    url_type = "Manage页面" if use_manage_url else "登录页面"
+    
     # 启动浏览器
     print(f"正在启动 {BROWSER_NAME} 浏览器...")
     print(f"  调试端口：{DEBUG_PORT}")
     print(f"  用户数据：{USER_DATA_DIR}")
+    print(f"  启动页面：{url_type}")
     print()
     
     cmd = [
@@ -95,7 +105,7 @@ def start_browser():
         f"--remote-debugging-port={DEBUG_PORT}",
         f"--user-data-dir={USER_DATA_DIR}",
         "--profile-directory=Default",
-        MAXIMO_LOGIN_URL
+        start_url
     ]
     
     try:
@@ -111,15 +121,21 @@ def start_browser():
         for i in range(15):  # 增加到 15 秒
             time.sleep(1)
             if check_browser_running():
-                print(" ✓")
                 print()
                 print("=" * 60)
                 print("✓ 浏览器启动成功！")
                 print("=" * 60)
                 print()
-                print("下一步：")
-                print("  1. 如果浏览器未自动登录，请手动登录 Maximo")
-                print("  2. 登录成功后，运行：python start_api.py")
+                if use_manage_url:
+                    print("下一步：")
+                    print("  1. 如果浏览器已登录，应该直接进入 Manage 页面")
+                    print("  2. 如果跳转到登录页，请先登录")
+                    print("  3. 登录成功后，运行：python start_api.py")
+                else:
+                    print("下一步：")
+                    print("  1. 如果浏览器未自动登录，请手动登录 Maximo")
+                    print("  2. 登录成功后，手动导航到 Manage 页面")
+                    print("  3. 然后运行：python start_api.py")
                 print()
                 print("提示：")
                 print("  - 保持浏览器窗口打开")
@@ -142,6 +158,7 @@ def start_browser():
 if __name__ == "__main__":
     # 检查命令行参数
     clean_mode = "--clean" in sys.argv or "-c" in sys.argv
+    manage_mode = "--manage" in sys.argv or "-m" in sys.argv
     
     print()
     print("=" * 60)
@@ -155,7 +172,7 @@ if __name__ == "__main__":
         kill_edge_processes()
         print()
     
-    success = start_browser()
+    success = start_browser(use_manage_url=manage_mode)
     
     if not success:
         print()
@@ -163,4 +180,8 @@ if __name__ == "__main__":
         print("   1. 可能有其他 Edge 进程占用端口")
         print("   2. 尝试使用清理模式：python start_browser.py --clean")
         print("   3. 或手动关闭所有 Edge 窗口后重试")
+        print()
+        print("💡 启动选项：")
+        print("   --clean, -c    清理模式：关闭所有 Edge 进程后启动")
+        print("   --manage, -m   直接打开 Manage 页面（需要已登录）")
         sys.exit(1)
