@@ -166,34 +166,36 @@ async def navigate_to_manage_shell_async():
                     print()  # 换行
                     print(f"⏰ 第 {current_second} 秒：尝试点击元素...")
                     try:
-                        # 尝试查找元素
-                        element = home_page.locator(target_selector).first
+                        # 使用 JavaScript 直接点击元素（最可靠的方法）
+                        result = await home_page.evaluate("""
+                            () => {
+                                // 尝试多种方式查找元素
+                                let element = document.getElementById('FavoriteApp_ITEM');
+                                
+                                if (!element) {
+                                    // 尝试通过文本查找
+                                    const links = document.querySelectorAll('a');
+                                    for (let link of links) {
+                                        if (link.textContent.includes('主项目')) {
+                                            element = link;
+                                            break;
+                                        }
+                                    }
+                                }
+                                
+                                if (element) {
+                                    element.click();
+                                    return { success: true, message: '找到并点击了元素' };
+                                } else {
+                                    return { success: false, message: '未找到元素' };
+                                }
+                            }
+                        """)
                         
-                        # 检查元素数量
-                        count = await home_page.locator(target_selector).count()
-                        print(f"  找到 {count} 个匹配元素")
-                        
-                        if count > 0:
-                            # 等待元素可见
-                            try:
-                                await element.wait_for(state="visible", timeout=5000)
-                                print(f"  ✓ 元素已可见")
-                            except:
-                                print(f"  ⚠ 元素不可见，尝试强制点击")
-                            
-                            # 尝试点击
-                            try:
-                                await element.click(timeout=3000)
-                                print(f"  ✓ 点击成功")
-                            except Exception as click_err:
-                                # 如果普通点击失败，尝试强制点击
-                                try:
-                                    await element.click(force=True, timeout=3000)
-                                    print(f"  ✓ 强制点击成功")
-                                except Exception as force_err:
-                                    print(f"  ⚠ 点击失败: {force_err}")
+                        if result['success']:
+                            print(f"  ✓ {result['message']}")
                         else:
-                            print(f"  ⚠ 未找到元素")
+                            print(f"  ⚠ {result['message']}")
                     except Exception as e:
                         print(f"  ⚠ 操作失败: {e}")
                 
