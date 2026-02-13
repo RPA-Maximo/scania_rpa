@@ -131,8 +131,6 @@ async def navigate_to_manage_shell_async():
     from playwright.async_api import async_playwright
     
     target_url = "https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell"
-    # 使用文本选择器，更可靠
-    target_selector = 'text=主项目'
     
     try:
         p = await async_playwright().start()
@@ -153,54 +151,11 @@ async def navigate_to_manage_shell_async():
             await home_page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
             print(f"✓ 导航成功：{target_url}")
             
-            # 等待 60 秒，并在第 40、50、60 秒时尝试点击元素
+            # 等待 60 秒
             print("⏳ 等待 60 秒让页面完全加载...")
-            click_times = [40, 50, 60]  # 在这些秒数时尝试点击
-            
             for i in range(60, 0, -1):
-                current_second = 61 - i  # 当前经过的秒数
                 print(f"  剩余 {i} 秒...", end="\r", flush=True)
-                
-                # 检查是否到达点击时间
-                if current_second in click_times:
-                    print()  # 换行
-                    print(f"⏰ 第 {current_second} 秒：尝试点击元素...")
-                    try:
-                        # 使用 JavaScript 直接点击元素（最可靠的方法）
-                        result = await home_page.evaluate("""
-                            () => {
-                                // 尝试多种方式查找元素
-                                let element = document.getElementById('FavoriteApp_ITEM');
-                                
-                                if (!element) {
-                                    // 尝试通过文本查找
-                                    const links = document.querySelectorAll('a');
-                                    for (let link of links) {
-                                        if (link.textContent.includes('主项目')) {
-                                            element = link;
-                                            break;
-                                        }
-                                    }
-                                }
-                                
-                                if (element) {
-                                    element.click();
-                                    return { success: true, message: '找到并点击了元素' };
-                                } else {
-                                    return { success: false, message: '未找到元素' };
-                                }
-                            }
-                        """)
-                        
-                        if result['success']:
-                            print(f"  ✓ {result['message']}")
-                        else:
-                            print(f"  ⚠ {result['message']}")
-                    except Exception as e:
-                        print(f"  ⚠ 操作失败: {e}")
-                
                 await asyncio.sleep(1)
-            
             print()
             print("✓ 等待完成")
             
