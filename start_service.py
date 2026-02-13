@@ -265,31 +265,54 @@ def navigate_to_manage():
                 await asyncio.sleep(2)
                 waited += 2
                 if waited % 10 == 0:
-                    print(f"    仍在等待... ({waited}s)")
+                    print(f"    仍在等待 iframe... ({waited}s)")
             
             if not main_frame:
                 print(f"  ⚠ 未找到主 iframe，使用 main_frame")
                 main_frame = maximo_page.main_frame
             
-            # 等待侧边栏菜单出现（使用 Playwright 的 wait_for_selector）
+            # 等待侧边栏菜单出现
             print("  等待侧边栏菜单加载...")
             try:
                 from rpa.config import SELECTORS
                 
-                # 使用 wait_for_selector 等待元素出现（最多等待 60 秒）
-                await main_frame.wait_for_selector(
-                    f'#{SELECTORS.MENU_PURCHASE}',
-                    state='attached',
-                    timeout=60000  # 60 秒超时
-                )
+                # 使用轮询方式检查元素（因为 wait_for_selector 在 iframe 中可能不稳定）
+                menu_found = False
+                waited = 0
+                max_menu_wait = 60
                 
-                print("  ✓ 侧边栏菜单已就绪")
-                return True
+                while waited < max_menu_wait:
+                    try:
+                        # 使用 evaluate 检查元素是否存在
+                        purchase_menu_exists = await main_frame.evaluate(f"""
+                            () => {{
+                                const elem = document.getElementById('{SELECTORS.MENU_PURCHASE}');
+                                return elem !== null;
+                            }}
+                        """)
+                        
+                        if purchase_menu_exists:
+                            menu_found = True
+                            print(f"  ✓ 侧边栏菜单已就绪（等待了 {waited} 秒）")
+                            break
+                    except Exception:
+                        pass  # 继续等待
+                    
+                    await asyncio.sleep(2)
+                    waited += 2
+                    if waited % 10 == 0:
+                        print(f"    仍在等待侧边栏... ({waited}s)")
+                
+                if menu_found:
+                    return True
+                else:
+                    print(f"  ✗ 等待侧边栏菜单超时（{max_menu_wait}秒）")
+                    print("  提示：页面加载时间过长，请检查网络或手动刷新页面")
+                    return False
                     
             except Exception as e:
-                print(f"  ✗ 等待侧边栏菜单超时")
+                print(f"  ✗ 检查侧边栏菜单失败")
                 print(f"  详细错误：{e}")
-                print("  提示：页面加载时间过长，请检查网络或手动刷新页面")
                 return False
             
         except Exception as e:

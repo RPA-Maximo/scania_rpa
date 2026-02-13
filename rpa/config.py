@@ -81,7 +81,7 @@ class WaitTimes:
 class Limits:
     """限制配置"""
     
-    MAX_PAGES_TO_SEARCH: int = 5  # 最多翻页次数
+    MAX_PAGES_TO_SEARCH: int = 20  # 最多翻页次数
     MAX_REMARK_LENGTH: int = 254  # 备注最大长度
 
 
