@@ -127,8 +127,9 @@ def navigate_to_manage_shell(page_id: str):
 
 
 async def navigate_to_manage_shell_async():
-    """使用 Playwright 导航到 manage-shell 页面"""
+    """使用 Playwright 导航到 manage-shell 页面并点击菜单"""
     from playwright.async_api import async_playwright
+    from rpa.navigation import click_menu_purchase, click_menu_receipts
     
     target_url = "https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell"
     
@@ -151,13 +152,43 @@ async def navigate_to_manage_shell_async():
             await home_page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
             print(f"✓ 导航成功：{target_url}")
             
-            # 等待 60 秒
-            print("⏳ 等待 60 秒让页面完全加载...")
-            for i in range(60, 0, -1):
-                print(f"  剩余 {i} 秒...", end="\r", flush=True)
-                await asyncio.sleep(1)
-            print()
-            print("✓ 等待完成")
+            # 等待页面加载
+            print("⏳ 等待页面加载...")
+            await asyncio.sleep(5)
+            
+            # 获取 main frame
+            print("正在查找 main frame...")
+            main_frame = None
+            for frame in home_page.frames:
+                if 'main' in frame.url or 'manage-shell' in frame.url:
+                    main_frame = frame
+                    break
+            
+            if not main_frame:
+                main_frame = home_page.main_frame
+            
+            print(f"✓ 找到 frame: {main_frame.url}")
+            
+            # 点击"采购"菜单
+            print("正在点击'采购'菜单...")
+            try:
+                await click_menu_purchase(main_frame)
+                print("✓ 已点击'采购'菜单")
+            except Exception as e:
+                print(f"⚠ 点击'采购'菜单失败: {e}")
+            
+            # 点击"接收"菜单
+            print("正在点击'接收'菜单...")
+            try:
+                await click_menu_receipts(main_frame)
+                print("✓ 已点击'接收'菜单")
+            except Exception as e:
+                print(f"⚠ 点击'接收'菜单失败: {e}")
+            
+            # 额外等待让接收页面完全加载
+            print("⏳ 等待接收页面加载...")
+            await asyncio.sleep(3)
+            print("✓ 导航完成")
             
             await browser.close()
             await p.stop()

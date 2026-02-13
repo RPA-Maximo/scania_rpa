@@ -12,8 +12,8 @@ class ElementSelectors:
     """Maximo 页面元素选择器"""
     
     # 菜单相关
-    MENU_PURCHASE: str = 'mea59820d_ns_menu_PURCHASE_MODULE_a'
-    MENU_RECEIPTS: str = 'mea59820d_ns_menu_PURCHASE_MODULE_sub_changeapp_RECEIPTS_a'
+    MENU_PURCHASE: str = 'm7f8f3e49_ns_menu_PURCHASE_MODULE_a'
+    MENU_RECEIPTS: str = 'm7f8f3e49_ns_menu_PURCHASE_MODULE_sub_changeapp_RECEIPTS_a'
     
     # 按钮相关
     BUTTON_SELECT_ORDERED_ITEMS: str = 'm52852ffc_bg_button_selorditem-pb'
