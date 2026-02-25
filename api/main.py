@@ -2,6 +2,7 @@
 Maximo RPA API 主入口
 通过 subprocess 调用 RPA 脚本，避免事件循环冲突
 """
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -13,11 +14,27 @@ from pathlib import Path
 
 # 项目根目录
 PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from rpa.keepalive import KeepaliveManager
+
+# 保活管理器（全局单例）
+keepalive_manager = KeepaliveManager()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理：启动/停止保活定时器"""
+    keepalive_manager.start()
+    yield
+    keepalive_manager.stop()
+
 
 app = FastAPI(
     title="Maximo RPA API",
     description="Maximo 入库操作自动化 API 服务",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # CORS 配置
@@ -88,8 +105,28 @@ async def health_check():
     """健康检查"""
     return {
         "status": "healthy",
-        "service": "maximo-rpa-api"
+        "service": "maximo-rpa-api",
+        "keepalive": keepalive_manager.get_status()
     }
+
+
+@app.get("/api/keepalive")
+async def trigger_keepalive():
+    """
+    手动触发保活
+    
+    返回保活结果和当前会话状态
+    """
+    result = keepalive_manager.trigger_keepalive()
+    return result
+
+
+@app.get("/api/keepalive/status")
+async def keepalive_status():
+    """
+    查询保活状态（不触发保活操作）
+    """
+    return keepalive_manager.get_status()
 
 
 @app.post("/api/receipt", response_model=ReceiptResponse)
@@ -100,6 +137,18 @@ async def create_receipt(request: ReceiptRequest):
     通过 subprocess 调用 RPA 脚本批量处理入库操作
     支持按 PO 行号或项目号查找
     """
+    # 获取保活锁（暂停保活定时器）
+    keepalive_manager.acquire()
+    
+    try:
+        return await _execute_receipt(request)
+    finally:
+        # 释放保活锁（恢复保活定时器 + 重新倒计时）
+        keepalive_manager.release()
+
+
+async def _execute_receipt(request: ReceiptRequest) -> ReceiptResponse:
+    """实际执行入库操作（内部方法）"""
     print("\n" + "=" * 80)
     print("FastAPI: 收到入库请求")
     print("=" * 80)
