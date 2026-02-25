@@ -48,13 +48,24 @@ app.add_middleware(
 )
 
 
+import logging
+
+# API 请求日志
+api_logger = logging.getLogger("api")
+api_logger.setLevel(logging.INFO)
+if not api_logger.handlers:
+    _handler = logging.StreamHandler(sys.stderr)
+    _handler.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+    api_logger.addHandler(_handler)
+
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     """请求日志中间件"""
     start = time.time()
     response = await call_next(request)
     elapsed = (time.time() - start) * 1000  # 毫秒
-    print(
+    api_logger.info(
         f"API: {request.method} {request.url.path} → "
         f"{response.status_code} ({elapsed:.0f}ms)"
     )
