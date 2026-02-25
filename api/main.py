@@ -3,13 +3,14 @@ Maximo RPA API 主入口
 通过 subprocess 调用 RPA 脚本，避免事件循环冲突
 """
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import subprocess
 import json
 import sys
+import time
 from pathlib import Path
 
 # 项目根目录
@@ -45,6 +46,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """请求日志中间件"""
+    start = time.time()
+    response = await call_next(request)
+    elapsed = (time.time() - start) * 1000  # 毫秒
+    print(
+        f"API: {request.method} {request.url.path} → "
+        f"{response.status_code} ({elapsed:.0f}ms)"
+    )
+    return response
 
 
 # 数据模型
