@@ -24,10 +24,10 @@ from config.settings import (
     MAXIMO_API_URL,
     DEFAULT_HEADERS,
     VERIFY_SSL,
-    PROXIES,
     RAW_DATA_DIR,
     REQUEST_DELAY,
 )
+from config.settings_manager import settings_manager
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -115,7 +115,7 @@ def _run_po_scraper(req: POScrapeRequest) -> dict:
                     headers=headers,
                     params=params,
                     verify=VERIFY_SSL,
-                    proxies=PROXIES,
+                    proxies=settings_manager.get_proxies(),
                     timeout=REQUEST_TIMEOUT,
                 )
                 if resp.status_code == 200:
@@ -151,7 +151,7 @@ def _run_po_scraper(req: POScrapeRequest) -> dict:
                     headers=headers,
                     params=params,
                     verify=VERIFY_SSL,
-                    proxies=PROXIES,
+                    proxies=settings_manager.get_proxies(),
                     timeout=REQUEST_TIMEOUT,
                 )
                 if resp.status_code == 200:
@@ -224,7 +224,7 @@ def _run_inventory_scraper(req: InventoryScrapeRequest) -> dict:
                 headers=headers,
                 params=params,
                 verify=VERIFY_SSL,
-                proxies=PROXIES,
+                proxies=settings_manager.get_proxies(),
                 timeout=REQUEST_TIMEOUT,
             )
             if resp.status_code == 200:
