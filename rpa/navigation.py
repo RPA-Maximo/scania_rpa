@@ -49,72 +49,135 @@ async def check_if_on_receipts_search_page(main_frame: Frame) -> bool:
     return result
 
 
-async def click_menu_purchase(main_frame: Frame) -> None:
+async def click_menu_purchase(main_frame: Frame) -> bool:
     """
     点击'采购'菜单
-    
+    使用部分 ID 匹配，兼容 Maximo 动态生成的 hash 前缀
+
     Args:
         main_frame: Playwright frame 对象
-    
+
+    Returns:
+        是否成功点击
+
     LLM 提示：这是进入采购模块的第一步
     """
-    logger.debug(f"尝试点击采购菜单，ID: {SELECTORS.MENU_PURCHASE}")
-    
-    # 检查元素是否存在
-    exists = await main_frame.evaluate(f"""
-        () => {{
-            const elem = document.getElementById('{SELECTORS.MENU_PURCHASE}');
-            return elem !== null;
-        }}
+    result = await main_frame.evaluate("""
+        () => {
+            // 优先部分 ID 匹配，兼容动态 hash 前缀
+            const elem = document.querySelector('[id*="PURCHASE_MODULE_a"]');
+            if (elem) {
+                elem.click();
+                return { found: true, id: elem.id };
+            }
+            return { found: false };
+        }
     """)
-    
-    if not exists:
-        logger.warning(f"采购菜单元素不存在 (ID: {SELECTORS.MENU_PURCHASE})")
+
+    if result.get('found'):
+        logger.debug(f"已点击采购菜单: {result.get('id')}")
+        await asyncio.sleep(WAIT_TIMES.AFTER_MENU_CLICK)
+        return True
     else:
-        logger.debug("采购菜单元素存在，执行点击")
-    
-    await main_frame.evaluate(f"""
-        () => {{
-            const elem = document.getElementById('{SELECTORS.MENU_PURCHASE}');
-            if (elem) elem.click();
-        }}
-    """)
-    await asyncio.sleep(WAIT_TIMES.AFTER_MENU_CLICK)
-    logger.debug(f"等待 {WAIT_TIMES.AFTER_MENU_CLICK}s 后完成")
+        logger.warning("未找到采购菜单元素 (尝试了 [id*='PURCHASE_MODULE_a'])")
+        return False
 
 
-async def click_menu_receipts(main_frame: Frame) -> None:
+async def click_menu_receipts(main_frame: Frame) -> bool:
     """
-    点击'接收'菜单
-    
+    点击'接收'子菜单
+    等待 Purchase 下拉菜单展开后再点击，使用部分 ID 匹配
+
     Args:
         main_frame: Playwright frame 对象
-    
-    LLM 提示：从采购模块进入接收页面
+
+    Returns:
+        是否成功点击
+
+    LLM 提示：从采购模块进入接收页面，需要等待子菜单可见
     """
-    logger.debug(f"尝试点击接收菜单，ID: {SELECTORS.MENU_RECEIPTS}")
-    
-    # 检查元素是否存在
-    exists = await main_frame.evaluate(f"""
-        () => {{
-            const elem = document.getElementById('{SELECTORS.MENU_RECEIPTS}');
-            return elem !== null;
-        }}
-    """)
-    
-    if not exists:
-        logger.warning(f"接收菜单元素不存在 (ID: {SELECTORS.MENU_RECEIPTS})")
-    else:
-        logger.debug("接收菜单元素存在，执行点击")
-    
-    await main_frame.evaluate(f"""
-        () => {{
-            const elem = document.getElementById('{SELECTORS.MENU_RECEIPTS}');
-            if (elem) elem.click();
-        }}
-    """)
-    await asyncio.sleep(WAIT_TIMES.AFTER_RECEIPTS_CLICK)
-    logger.debug(f"等待 {WAIT_TIMES.AFTER_RECEIPTS_CLICK}s 后完成")
+    max_wait = 5.0
+    interval = 0.5
+    waited = 0.0
+
+    while waited < max_wait:
+        result = await main_frame.evaluate("""
+            () => {
+                const elem = document.querySelector('[id*="changeapp_RECEIPTS"]');
+                if (!elem) return { found: false };
+                const style = window.getComputedStyle(elem);
+                const visible = style.display !== 'none' && style.visibility !== 'hidden';
+                return { found: true, id: elem.id, visible: visible };
+            }
+        """)
+
+        if result.get('found') and result.get('visible'):
+            await main_frame.evaluate("""
+                () => {
+                    const elem = document.querySelector('[id*="changeapp_RECEIPTS"]');
+                    if (elem) elem.click();
+                }
+            """)
+            logger.debug(f"已点击接收子菜单: {result.get('id')}")
+            await asyncio.sleep(WAIT_TIMES.AFTER_RECEIPTS_CLICK)
+            return True
+
+        await asyncio.sleep(interval)
+        waited += interval
+
+    logger.warning(f"等待 {max_wait}s 后未找到可见的接收子菜单元素")
+    return False
+
+
+async def navigate_to_receipts_page(main_frame: Frame, max_retries: int = 2) -> bool:
+    """
+    从任意 Maximo 页面导航到接收查询页面（接收单主页）
+
+    无论当前处于哪个 Maximo 模块，均可通过此函数自动导航到接收查询页面。
+    内部使用灵活的 CSS 选择器 + 子菜单可见性等待 + 重试机制。
+
+    Args:
+        main_frame: Playwright frame 对象
+        max_retries: 导航失败时的最大重试次数（默认 2 次）
+
+    Returns:
+        是否成功到达接收查询页面
+
+    LLM 提示：保活 worker 和 RPA 工作流应调用此函数代替手动导航序列
+    """
+    # 已在接收查询页面，直接返回
+    if await check_if_on_receipts_search_page(main_frame):
+        logger.debug("已在接收查询页面，无需导航")
+        return True
+
+    for attempt in range(max_retries + 1):
+        if attempt > 0:
+            logger.warning(f"导航失败，开始第 {attempt} 次重试...")
+            await asyncio.sleep(2)
+
+        logger.debug(f"导航到接收查询页面（第 {attempt + 1} 次尝试）...")
+
+        purchase_ok = await click_menu_purchase(main_frame)
+        if not purchase_ok:
+            logger.warning("采购菜单点击失败，跳过本次尝试")
+            continue
+
+        receipts_ok = await click_menu_receipts(main_frame)
+        if not receipts_ok:
+            logger.warning("接收子菜单点击失败，跳过本次尝试")
+            continue
+
+        # 额外等待页面加载
+        await asyncio.sleep(1)
+
+        if await check_if_on_receipts_search_page(main_frame):
+            logger.success("成功导航到接收查询页面")
+            return True
+
+        logger.warning("点击菜单后仍未到达接收查询页面")
+
+    logger.error(f"经过 {max_retries + 1} 次尝试后仍无法导航到接收查询页面")
+    return False
 
 
 async def search_all_po(main_frame: Frame) -> Tuple[bool, str]:

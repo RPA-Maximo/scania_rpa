@@ -15,6 +15,7 @@ from .browser import connect_to_browser
 
 # 页面导航
 from .navigation import (
+    navigate_to_receipts_page,
     click_menu_purchase,
     click_menu_receipts,
     search_all_po,
@@ -47,6 +48,7 @@ __all__ = [
     'connect_to_browser',
     
     # 导航
+    'navigate_to_receipts_page',
     'click_menu_purchase',
     'click_menu_receipts',
     'search_all_po',

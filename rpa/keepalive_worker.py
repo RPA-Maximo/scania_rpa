@@ -20,9 +20,7 @@ if sys.platform == 'win32':
 
 from rpa.browser import connect_to_browser
 from rpa.navigation import (
-    check_if_on_receipts_search_page,
-    click_menu_purchase,
-    click_menu_receipts,
+    navigate_to_receipts_page,
     search_all_po,
     wait_for_po_list
 )
@@ -55,37 +53,18 @@ async def keepalive_action():
                 'po_count': 0
             }
 
-        # 检查是否在接收查询页面
-        on_search_page = await check_if_on_receipts_search_page(main_frame)
+        # 导航到接收查询页面（从任意页面均可）
+        print("检查并导航到接收查询页面...", file=sys.stderr)
+        on_search_page = await navigate_to_receipts_page(main_frame)
 
         if not on_search_page:
-            print("不在接收查询页面，正在导航...", file=sys.stderr)
-            
-            # 导航到接收查询页面
-            try:
-                await click_menu_purchase(main_frame)
-                print("✓ 已点击采购菜单", file=sys.stderr)
-            except Exception as e:
-                print(f"⚠ 点击采购菜单失败: {e}", file=sys.stderr)
-
-            try:
-                await click_menu_receipts(main_frame)
-                print("✓ 已点击接收菜单", file=sys.stderr)
-            except Exception as e:
-                print(f"⚠ 点击接收菜单失败: {e}", file=sys.stderr)
-
-            # 等待页面加载
-            await asyncio.sleep(2)
-
-            # 再次检查
-            on_search_page = await check_if_on_receipts_search_page(main_frame)
-            if not on_search_page:
-                return {
-                    'success': False,
-                    'reason': 'navigation_failed',
-                    'message': '无法导航到接收查询页面',
-                    'po_count': 0
-                }
+            return {
+                'success': False,
+                'reason': 'navigation_failed',
+                'message': '无法导航到接收查询页面',
+                'po_count': 0
+            }
+        print("✓ 已到达接收查询页面", file=sys.stderr)
 
         # 执行 PO 搜索（触发回车）
         print("执行 PO 搜索...", file=sys.stderr)
