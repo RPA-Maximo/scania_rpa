@@ -11,7 +11,16 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.utils.db import generate_id, format_datetime
-from src.utils.mapper import PO_HEADER_MAPPING
+from src.utils.mapper import PO_HEADER_MAPPING, VENDOR_FIELD_CANDIDATES, SHIPTO_FIELD_CANDIDATES
+
+
+def _first_nonempty(data: dict, keys: list) -> str:
+    """从 data 中按 keys 列表顺序取第一个非空值"""
+    for k in keys:
+        v = data.get(k)
+        if v and str(v).strip():
+            return str(v).strip()
+    return ''
 
 
 def get_supplier_info(cursor, vendor_code: str) -> Tuple[Optional[int], Optional[str]]:
@@ -86,7 +95,40 @@ def map_header_data(cursor, po_data: Dict) -> Dict:
     else:
         result['owner_dept_id'] = None
         result['supplier_name'] = None
-    
+
+    # ── 供应商扩展信息（来自 Maximo PO 供应商字段）────────────────────────
+    vc = VENDOR_FIELD_CANDIDATES
+    result['vendor_code']      = _first_nonempty(po_data, vc['vendor_code']) or None
+    result['supplier_address'] = _first_nonempty(po_data, vc['supplier_address']) or None
+    result['supplier_zip']     = _first_nonempty(po_data, vc['supplier_zip']) or None
+    result['supplier_city']    = _first_nonempty(po_data, vc['supplier_city']) or None
+    # supplier_country: 业务要求不抓，留空
+    result['supplier_contact'] = _first_nonempty(po_data, vc['supplier_contact']) or None
+    result['supplier_phone']   = _first_nonempty(po_data, vc['supplier_phone']) or None
+    result['supplier_email']   = _first_nonempty(po_data, vc['supplier_email']) or None
+
+    # ── 收货方信息（shipto）───────────────────────────────────────────────
+    sc = SHIPTO_FIELD_CANDIDATES
+    result['company_name'] = _first_nonempty(po_data, sc['company_name']) or None
+
+    # 街道地址：合并 address1 和 address2
+    addr1 = _first_nonempty(po_data, sc['street_address_1'])
+    addr2 = _first_nonempty(po_data, sc['street_address_2'])
+    result['street_address'] = ' '.join(filter(None, [addr1, addr2])) or None
+
+    result['postal_code'] = _first_nonempty(po_data, sc['postal_code']) or None
+    result['city']        = _first_nonempty(po_data, sc['city']) or None
+    result['country']     = 'China'  # 固定值
+
+    # 联系人、联系电话、电子邮件、接收人：业务要求不抓，留空
+    result['contact_person'] = None
+    result['contact_phone']  = None
+    result['contact_email']  = None
+    result['receiver']       = None
+
+    # 斯堪尼亚客户代码：业务要求不填，留空
+    result['scania_customer_code'] = None
+
     return result
 
 
