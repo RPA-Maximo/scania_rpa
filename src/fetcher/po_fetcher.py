@@ -16,12 +16,10 @@ import urllib3
 from config import (
     get_maximo_auth,
     DEFAULT_HEADERS,
-    REQUEST_DELAY,
-    VERIFY_SSL,
     RAW_DATA_DIR,
-    PROXIES
 )
-from config.settings import MAXIMO_BASE_URL
+from config.settings import MAXIMO_BASE_URL, REQUEST_DELAY, VERIFY_SSL
+from config.settings_manager import settings_manager
 
 # 禁用安全警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -102,7 +100,7 @@ def fetch_po_by_number(po_number: str, save_to_file: bool = True) -> Optional[di
             headers=headers,
             params=params,
             verify=VERIFY_SSL,
-            proxies=PROXIES,
+            proxies=settings_manager.get_proxies(),
             timeout=REQUEST_TIMEOUT
         )
         
@@ -220,7 +218,7 @@ def fetch_po_list(
                     headers=headers,
                     params=params,
                     verify=VERIFY_SSL,
-                    proxies=PROXIES,
+                    proxies=settings_manager.get_proxies(),
                     timeout=REQUEST_TIMEOUT
                 )
                 

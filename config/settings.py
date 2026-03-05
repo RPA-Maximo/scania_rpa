@@ -67,9 +67,32 @@ MAX_RETRIES = 3
 PROXY_ENABLED = True
 PROXY_HOST = "127.0.0.1"
 PROXY_PORT = 10820
+PROXY_PROTOCOL = "socks5"  # socks5 | http | https
 
-# 代理字典（用于 requests）
-PROXIES = {
-    'http': f'socks5://{PROXY_HOST}:{PROXY_PORT}',
-    'https': f'socks5://{PROXY_HOST}:{PROXY_PORT}'
-} if PROXY_ENABLED else None
+
+def _build_proxies():
+    """构建代理字典，自动检测 SOCKS 依赖是否可用"""
+    if not PROXY_ENABLED:
+        return None
+    if PROXY_PROTOCOL.startswith("socks"):
+        try:
+            import socks  # noqa: F401
+        except ImportError:
+            import warnings
+            warnings.warn(
+                f"\n[代理] SOCKS5 代理需要安装 PySocks，请执行: pip install PySocks\n"
+                f"[代理] 当前已自动禁用代理，将直连访问 Maximo API\n"
+                f"[代理] 也可通过 POST /api/settings/proxy 在运行时修改代理配置",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return None
+    return {
+        'http': f'{PROXY_PROTOCOL}://{PROXY_HOST}:{PROXY_PORT}',
+        'https': f'{PROXY_PROTOCOL}://{PROXY_HOST}:{PROXY_PORT}',
+    }
+
+
+# 静态代理字典（启动时确定）
+# 运行时修改请使用 config.settings_manager.settings_manager.get_proxies()
+PROXIES = _build_proxies()

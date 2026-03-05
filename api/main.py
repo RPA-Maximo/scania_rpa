@@ -20,6 +20,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from rpa.keepalive import KeepaliveManager
 from api.routers.auth import router as auth_router
 from api.routers.scraper import router as scraper_router
+from api.routers.settings import router as settings_router
 
 # 保活管理器（全局单例）
 keepalive_manager = KeepaliveManager()
@@ -53,6 +54,7 @@ app.add_middleware(
 # 注册路由
 app.include_router(auth_router)
 app.include_router(scraper_router)
+app.include_router(settings_router)
 
 import logging
 
