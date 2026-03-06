@@ -42,7 +42,7 @@ async def keepalive_action():
         p, browser, maximo_page, main_frame = await connect_to_browser()
         print("✓ 浏览器已连接", file=sys.stderr)
 
-        # 检查是否在登录页面
+        # 检查是否在登录页面（外层页面 URL）
         current_url = maximo_page.url.lower()
         if 'login' in current_url or 'auth.scania' in current_url:
             return {
@@ -53,22 +53,69 @@ async def keepalive_action():
                 'po_count': 0
             }
 
+        # 检查 iframe 本身是否跳转到了登录页
+        frame_url = main_frame.url.lower()
+        if 'login' in frame_url or 'auth.scania' in frame_url:
+            return {
+                'success': False,
+                'reason': 'session_expired',
+                'message': f'会话已过期，iframe 跳转到登录页: {main_frame.url}',
+                'url': main_frame.url,
+                'po_count': 0
+            }
+
+        # 若 main_frame 与外层页面相同，或找不到采购菜单，尝试所有 frame
+        # 选出含有 PURCHASE_MODULE_a 的 frame 作为操作目标
+        active_frame = main_frame
+        found_menu_in_frame = await main_frame.evaluate("""
+            () => !!document.querySelector('[id*="PURCHASE_MODULE_a"]')
+        """)
+        if not found_menu_in_frame:
+            print("当前 frame 未找到采购菜单，尝试其他 frames...", file=sys.stderr)
+            for frame in maximo_page.frames:
+                if frame == main_frame:
+                    continue
+                try:
+                    has_menu = await frame.evaluate("""
+                        () => !!document.querySelector('[id*="PURCHASE_MODULE_a"]')
+                    """)
+                    if has_menu:
+                        active_frame = frame
+                        print(f"✓ 在 frame [{frame.url[:80]}] 找到采购菜单", file=sys.stderr)
+                        break
+                except Exception:
+                    continue
+            else:
+                print("⚠ 所有 frames 均未找到采购菜单，继续尝试原 frame", file=sys.stderr)
+
         # 导航到接收查询页面（从任意页面均可）
         print("检查并导航到接收查询页面...", file=sys.stderr)
-        on_search_page = await navigate_to_receipts_page(main_frame)
+        on_search_page = await navigate_to_receipts_page(active_frame)
 
         if not on_search_page:
+            # 尝试诊断：检查页面标题或弹窗
+            try:
+                page_title = await maximo_page.title()
+                frame_count = len(maximo_page.frames)
+                frame_urls = [f.url[:60] for f in maximo_page.frames]
+            except Exception:
+                page_title = "unknown"
+                frame_count = 0
+                frame_urls = []
             return {
                 'success': False,
                 'reason': 'navigation_failed',
-                'message': '无法导航到接收查询页面',
+                'message': (
+                    f'无法导航到接收查询页面 | 页面标题: {page_title} | '
+                    f'frame数量: {frame_count} | frames: {frame_urls}'
+                ),
                 'po_count': 0
             }
         print("✓ 已到达接收查询页面", file=sys.stderr)
 
         # 执行 PO 搜索（触发回车）
         print("执行 PO 搜索...", file=sys.stderr)
-        search_success, search_msg = await search_all_po(main_frame)
+        search_success, search_msg = await search_all_po(active_frame)
 
         if not search_success:
             return {
@@ -82,7 +129,7 @@ async def keepalive_action():
 
         # 等待 PO 列表加载
         print("等待 PO 列表加载...", file=sys.stderr)
-        list_success, waited = await wait_for_po_list(main_frame)
+        list_success, waited = await wait_for_po_list(active_frame)
 
         if not list_success:
             # 列表没加载出来，可能会话已过期
@@ -104,7 +151,7 @@ async def keepalive_action():
             }
 
         # 读取 PO 列表数据条数
-        po_count = await main_frame.evaluate("""
+        po_count = await active_frame.evaluate("""
             () => {
                 const spans = document.querySelectorAll('span.text.label.anchor');
                 return spans.length;
