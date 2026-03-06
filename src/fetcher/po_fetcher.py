@@ -88,7 +88,22 @@ def fetch_po_by_number(po_number: str, save_to_file: bool = True) -> Optional[di
     }
     
     params = {
-        'oslc.select': '*',
+        'oslc.select': (
+            '*,'
+            'requireddate,'
+            'vendor,vendorname,'
+            'venaddress1,venaddr1,'
+            'venzip,venpostalcode,'
+            'vencity,'
+            'vencontact,'
+            'venphone,'
+            'venemail,cxpoemail,'
+            'shiptoname,shiptocomp,'
+            'shiptoaddress1,shiptoaddr1,'
+            'shiptoaddress2,shiptoaddr2,'
+            'shiptocity,'
+            'shiptozip,shiptopostalcode'
+        ),
         'oslc.where': f'ponum="{po_number}"',
         '_dropnulls': 0,
     }
@@ -202,7 +217,22 @@ def fetch_po_list(
             print(f"  第 {page}/{max_pages} 页...", end=" ", flush=True)
             
             params = {
-                'oslc.select': '*',
+                'oslc.select': (
+                    '*,'
+                    'requireddate,'
+                    'vendor,vendorname,'
+                    'venaddress1,venaddr1,'
+                    'venzip,venpostalcode,'
+                    'vencity,'
+                    'vencontact,'
+                    'venphone,'
+                    'venemail,cxpoemail,'
+                    'shiptoname,shiptocomp,'
+                    'shiptoaddress1,shiptoaddr1,'
+                    'shiptoaddress2,shiptoaddr2,'
+                    'shiptocity,'
+                    'shiptozip,shiptopostalcode'
+                ),
                 'oslc.pageSize': page_size,
                 '_dropnulls': 0,
                 'pageno': page,
