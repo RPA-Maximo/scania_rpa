@@ -21,8 +21,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.fetcher.po_fetcher import fetch_po_list
 from src.sync.db_init import init_schema
 from src.sync.material import validate_and_sync_materials
-from src.sync.po_header import batch_insert_headers, check_po_exists
-from src.sync.po_detail import batch_insert_details
+from src.sync.po_header import batch_map_headers, batch_insert_headers, check_po_exists
+from src.sync.po_detail import batch_map_details, batch_insert_details
 from src.utils.db import get_connection
 
 # ── 日志 ──────────────────────────────────────────────────────────────────────
@@ -224,11 +224,19 @@ class POSyncService:
             if material_map is None:
                 material_map = {}
 
-            # 步骤 4：插入主表（增量，不更新已有记录）
-            header_map = batch_insert_headers(cursor, new_pos, update_existing=False)
+            # 步骤 4：清洗数据（先清洗，后入库）
+            cleaned_headers, pre_header_id_map = batch_map_headers(cursor, new_pos)
+            cleaned_details = batch_map_details(cursor, new_pos, pre_header_id_map, material_map)
 
-            # 步骤 5：插入明细
-            detail_stats = batch_insert_details(cursor, new_pos, header_map, material_map)
+            # 步骤 5：插入主表（使用清洗后数据）
+            header_map = batch_insert_headers(
+                cursor, new_pos, update_existing=False, pre_mapped=cleaned_headers
+            )
+
+            # 步骤 6：插入明细（使用清洗后数据）
+            detail_stats = batch_insert_details(
+                cursor, new_pos, header_map, material_map, pre_mapped=cleaned_details
+            )
 
             conn.commit()
 

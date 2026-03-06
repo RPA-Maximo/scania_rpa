@@ -184,44 +184,92 @@ def insert_po_header(cursor, header_data: Dict) -> int:
     return header_data['id']
 
 
+def batch_map_headers(
+    cursor,
+    po_list: List[Dict],
+) -> Tuple[Dict[str, Dict], Dict[str, int]]:
+    """
+    批量清洗订单头数据（只读 DB 做查询，不写入）
+
+    Args:
+        cursor: 数据库游标
+        po_list: 采购订单列表
+
+    Returns:
+        (cleaned_map, header_id_map):
+            cleaned_map    = {ponum: header_data_dict}
+            header_id_map  = {ponum: id}  （id 由 generate_id() 预生成）
+    """
+    print("\n" + "="*60)
+    print("步骤 2a: 清洗订单头数据")
+    print("="*60)
+
+    cleaned_map: Dict[str, Dict] = {}
+    header_id_map: Dict[str, int] = {}
+    failed = 0
+
+    for po_data in po_list:
+        po_code = po_data.get('ponum')
+        if not po_code:
+            print(f"  ✗ 跳过: 缺少 ponum")
+            failed += 1
+            continue
+        try:
+            header_data = map_header_data(cursor, po_data)
+            cleaned_map[po_code] = header_data
+            header_id_map[po_code] = header_data['id']
+            print(f"  ✓ {po_code}")
+        except Exception as e:
+            print(f"  ✗ {po_code}: {e}")
+            failed += 1
+
+    print(f"\n[INFO] 清洗完成: 成功 {len(cleaned_map)}, 失败 {failed}")
+    return cleaned_map, header_id_map
+
+
 def batch_insert_headers(
-    cursor, 
-    po_list: List[Dict], 
-    update_existing: bool = False
+    cursor,
+    po_list: List[Dict],
+    update_existing: bool = False,
+    pre_mapped: Dict[str, Dict] = None,
 ) -> Dict[str, int]:
     """
     批量插入订单头
-    
+
     Args:
         cursor: 数据库游标
         po_list: 采购订单列表
         update_existing: 是否更新已存在的订单
-        
+        pre_mapped: 预清洗数据 {ponum: header_data}，不为 None 时跳过 map 步骤
+
     Returns:
         dict: {订单号: 订单ID} 映射表
     """
     print("\n" + "="*60)
-    print("步骤 2: 插入订单头")
+    print("步骤 2b: 插入订单头")
     print("="*60)
-    
+
     header_map = {}
     stats = {'inserted': 0, 'updated': 0, 'skipped': 0, 'failed': 0}
-    
+
     for po_data in po_list:
         po_code = po_data.get('ponum')
         if not po_code:
             print(f"  ✗ 跳过: 缺少 ponum")
             stats['failed'] += 1
             continue
-        
+
         try:
-            # 检查是否已存在
             existing_id = check_po_exists(cursor, po_code)
-            
+
             if existing_id:
                 if update_existing:
                     delete_existing_po(cursor, existing_id)
-                    header_data = map_header_data(cursor, po_data)
+                    header_data = (
+                        pre_mapped[po_code]
+                        if pre_mapped and po_code in pre_mapped
+                        else map_header_data(cursor, po_data)
+                    )
                     header_id = insert_po_header(cursor, header_data)
                     header_map[po_code] = header_id
                     stats['updated'] += 1
@@ -231,20 +279,24 @@ def batch_insert_headers(
                     stats['skipped'] += 1
                     print(f"  ⊙ {po_code} (已存在)")
             else:
-                header_data = map_header_data(cursor, po_data)
+                header_data = (
+                    pre_mapped[po_code]
+                    if pre_mapped and po_code in pre_mapped
+                    else map_header_data(cursor, po_data)
+                )
                 header_id = insert_po_header(cursor, header_data)
                 header_map[po_code] = header_id
                 stats['inserted'] += 1
                 print(f"  ✓ {po_code}")
-                
+
         except Exception as e:
             print(f"  ✗ {po_code}: {e}")
             stats['failed'] += 1
-    
+
     print(f"\n[INFO] 订单头处理完成:")
     print(f"  新增: {stats['inserted']}")
     print(f"  更新: {stats['updated']}")
     print(f"  跳过: {stats['skipped']}")
     print(f"  失败: {stats['failed']}")
-    
+
     return header_map

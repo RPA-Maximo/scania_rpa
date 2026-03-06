@@ -167,28 +167,96 @@ def insert_po_lines(
     return stats
 
 
+def batch_map_details(
+    cursor,
+    po_list: List[Dict],
+    header_map: Dict[str, int],
+    material_map: Dict[str, int],
+) -> Dict[str, List[Dict]]:
+    """
+    批量清洗订单明细数据（只读 DB 做仓库查询，不写入）
+
+    Args:
+        cursor: 数据库游标
+        po_list: 采购订单列表
+        header_map: {ponum: form_id}（由 batch_map_headers 预生成）
+        material_map: {物料编号: 物料ID}
+
+    Returns:
+        {ponum: [cleaned_line_data, ...]}
+    """
+    print("\n" + "="*60)
+    print("步骤 3a: 清洗订单明细数据")
+    print("="*60)
+
+    result: Dict[str, List[Dict]] = {}
+    warehouse_cache: Dict[str, int] = {}
+    total_lines = 0
+
+    for po_data in po_list:
+        po_code = po_data.get('ponum')
+        form_id = header_map.get(po_code)
+        if not form_id:
+            continue
+
+        poline = po_data.get('poline', [])
+        cleaned_lines = []
+
+        for line in poline:
+            item_code = line.get('itemnum')
+            line_type = line.get('linetype', 'UNKNOWN')
+
+            if line_type in ['SERVICE', 'STDSERVICE']:
+                continue
+
+            if item_code:
+                material_id = material_map.get(item_code)
+                if not material_id:
+                    continue
+            else:
+                material_id = None
+
+            warehouse_code = line.get('storeloc')
+            warehouse_id = None
+            if warehouse_code:
+                if warehouse_code not in warehouse_cache:
+                    warehouse_cache[warehouse_code] = get_warehouse_id(cursor, warehouse_code)
+                warehouse_id = warehouse_cache[warehouse_code]
+
+            cleaned_lines.append(map_line_data(line, form_id, material_id, warehouse_id))
+
+        result[po_code] = cleaned_lines
+        total_lines += len(cleaned_lines)
+        print(f"  ✓ {po_code}: {len(cleaned_lines)} 行")
+
+    print(f"\n[INFO] 清洗完成: 共 {total_lines} 行明细")
+    return result
+
+
 def batch_insert_details(
     cursor,
     po_list: List[Dict],
     header_map: Dict[str, int],
-    material_map: Dict[str, int]
+    material_map: Dict[str, int],
+    pre_mapped: Dict[str, List[Dict]] = None,
 ) -> Dict:
     """
     批量插入订单明细
-    
+
     Args:
         cursor: 数据库游标
         po_list: 采购订单列表
         header_map: 订单头映射表 {订单号: 订单ID}
         material_map: 物料映射表 {物料编号: 物料ID}
-        
+        pre_mapped: 预清洗数据 {ponum: [line_data, ...]}，不为 None 时跳过 map 步骤
+
     Returns:
         dict: 统计信息
     """
     print("\n" + "="*60)
-    print("步骤 3: 插入订单明细")
+    print("步骤 3b: 插入订单明细")
     print("="*60)
-    
+
     total_stats = {
         'total_lines': 0,
         'inserted': 0,
@@ -197,53 +265,69 @@ def batch_insert_details(
         'skipped_not_found': 0,
         'failed': 0
     }
-    
+
     for po_data in po_list:
         po_code = po_data.get('ponum')
         form_id = header_map.get(po_code)
-        
+
         if not form_id:
             print(f"  ✗ {po_code}: 找不到订单头ID")
             continue
-        
-        poline = po_data.get('poline', [])
-        if not poline:
-            print(f"  ⊙ {po_code}: 无明细行")
-            continue
-        
-        total_stats['total_lines'] += len(poline)
-        
-        # 插入明细
-        line_stats = insert_po_lines(cursor, poline, form_id, material_map)
-        
-        # 累加统计
-        for key in line_stats:
-            total_stats[key] += line_stats[key]
-        
-        # 显示结果
-        total_inserted = line_stats['inserted'] + line_stats['inserted_no_sku']
-        msg = f"  ✓ {po_code}: {total_inserted}/{len(poline)} 行"
-        
-        details = []
-        if line_stats['inserted_no_sku'] > 0:
-            details.append(f"{line_stats['inserted_no_sku']} 非标准物料")
-        if line_stats['skipped_service'] > 0:
-            details.append(f"{line_stats['skipped_service']} 服务类")
-        
-        if details:
-            msg += f" ({', '.join(details)})"
-        
-        print(msg)
-    
+
+        # 使用预清洗数据或实时 map
+        if pre_mapped is not None:
+            cleaned_lines = pre_mapped.get(po_code, [])
+            total_stats['total_lines'] += len(cleaned_lines)
+
+            for line_data in cleaned_lines:
+                columns = ', '.join(line_data.keys())
+                placeholders = ', '.join(['%s'] * len(line_data))
+                insert_sql = f"INSERT INTO purchase_order_bd ({columns}) VALUES ({placeholders})"
+                try:
+                    cursor.execute(insert_sql, list(line_data.values()))
+                    if line_data.get('sku'):
+                        total_stats['inserted'] += 1
+                    else:
+                        total_stats['inserted_no_sku'] += 1
+                except Exception as e:
+                    print(f"    [ERROR] 插入明细失败: {e}")
+                    total_stats['failed'] += 1
+
+            total_inserted = total_stats['inserted'] + total_stats['inserted_no_sku']
+            print(f"  ✓ {po_code}: {len(cleaned_lines)} 行")
+        else:
+            poline = po_data.get('poline', [])
+            if not poline:
+                print(f"  ⊙ {po_code}: 无明细行")
+                continue
+
+            total_stats['total_lines'] += len(poline)
+            line_stats = insert_po_lines(cursor, poline, form_id, material_map)
+
+            for key in line_stats:
+                total_stats[key] += line_stats[key]
+
+            total_inserted = line_stats['inserted'] + line_stats['inserted_no_sku']
+            msg = f"  ✓ {po_code}: {total_inserted}/{len(poline)} 行"
+            details = []
+            if line_stats['inserted_no_sku'] > 0:
+                details.append(f"{line_stats['inserted_no_sku']} 非标准物料")
+            if line_stats['skipped_service'] > 0:
+                details.append(f"{line_stats['skipped_service']} 服务类")
+            if details:
+                msg += f" ({', '.join(details)})"
+            print(msg)
+
     print(f"\n[INFO] 订单明细处理完成:")
     print(f"  总行数: {total_stats['total_lines']}")
     print(f"  成功插入: {total_stats['inserted']} (标准物料)")
     if total_stats['inserted_no_sku'] > 0:
         print(f"  成功插入: {total_stats['inserted_no_sku']} (非标准物料)")
-    print(f"  跳过（服务类）: {total_stats['skipped_service']}")
+    if total_stats['skipped_service'] > 0:
+        print(f"  跳过（服务类）: {total_stats['skipped_service']}")
     if total_stats['skipped_not_found'] > 0:
         print(f"  跳过（物料未找到）: {total_stats['skipped_not_found']}")
     if total_stats['failed'] > 0:
         print(f"  失败: {total_stats['failed']}")
-    
+
     return total_stats
