@@ -30,7 +30,7 @@ VENDOR_FIELD_CANDIDATES = {
     # supplier_country: 不抓（业务要求）
     'supplier_contact': ['vencontact'],
     'supplier_phone':   ['venphone'],
-    'supplier_email':   ['venemail'],
+    'supplier_email':   ['cxpoemail', 'venemail'],  # cxpoemail = 接收PO的邮箱
 }
 
 # Maximo MXAPIPO 收货方字段候选名
