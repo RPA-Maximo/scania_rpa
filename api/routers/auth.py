@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -71,6 +71,32 @@ async def update_auth_from_fields(request: FieldsUpdateRequest):
     )
     if not result['success']:
         raise HTTPException(status_code=400, detail=result['message'])
+    return result
+
+
+@router.post("/curl-text", summary="通过纯文本 cURL 命令更新认证（无需 JSON 包装）")
+async def update_auth_from_curl_raw(request: Request):
+    """
+    直接粘贴 cURL (bash) 纯文本，**无需包装成 JSON**。
+
+    适合在 Swagger UI 外部（curl / Postman）直接发送时使用：
+    ```
+    curl -X POST http://localhost:8000/api/auth/curl-text \\
+         -H "Content-Type: text/plain" \\
+         --data-raw "curl 'https://...' -b 'LtpaToken2=...' --data-raw 'csrftoken=...'"
+    ```
+
+    与 `/api/auth/curl` 的区别：
+    - 本接口接受 `Content-Type: text/plain` 的原始文本 body
+    - `/api/auth/curl` 接受 `{"curl_text": "..."}` JSON 格式
+    """
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=400, detail="请求 body 为空，请粘贴 cURL 命令文本")
+    curl_text = body.decode("utf-8", errors="replace")
+    result = auth_manager.update_from_curl(curl_text)
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
     return result
 
 

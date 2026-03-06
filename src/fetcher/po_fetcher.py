@@ -223,7 +223,14 @@ def fetch_po_list(
                 )
                 
                 if resp.status_code == 200:
-                    data = resp.json()
+                    if not resp.content:
+                        print("认证过期（空响应）")
+                        break
+                    try:
+                        data = resp.json()
+                    except Exception:
+                        print(f"非JSON响应（认证可能已过期），内容: {resp.text[:100]!r}")
+                        break
                     items = data.get('member') or data.get('rdfs:member')
                     
                     if items:
