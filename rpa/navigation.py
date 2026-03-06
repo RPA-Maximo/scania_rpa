@@ -129,6 +129,44 @@ async def click_menu_receipts(main_frame: Frame) -> bool:
     return False
 
 
+async def _try_click_list_or_newsearch(main_frame: Frame) -> None:
+    """
+    尝试点击 Maximo 工具栏中的"返回列表"或"新建查询"按钮。
+    已在接收模块但处于详情页时，菜单点击后可能停留在原页面，
+    此函数作为补救措施强制跳转到列表/查询视图。
+    """
+    await main_frame.evaluate("""
+        () => {
+            // 优先找"返回列表"按钮（Maximo 标准工具栏 ID 含 BACK 或 LIST）
+            const candidates = [
+                '[id*="BACK-tbb"]',
+                '[id*="LIST-tbb"]',
+                '[id*="QUERY-tbb"]',
+                '[id*="SEARCH-tbb"]',
+            ];
+            for (const sel of candidates) {
+                const el = document.querySelector(sel);
+                if (el) { el.click(); return; }
+            }
+        }
+    """)
+
+
+async def _poll_for_receipts_page(main_frame: Frame, timeout: float = 10.0) -> bool:
+    """
+    轮询等待接收查询页面加载完成（含 tfrow 过滤输入框）。
+    比固定 sleep 更可靠，适用于网络较慢的场景。
+    """
+    interval = 0.5
+    waited = 0.0
+    while waited < timeout:
+        if await check_if_on_receipts_search_page(main_frame):
+            return True
+        await asyncio.sleep(interval)
+        waited += interval
+    return False
+
+
 async def navigate_to_receipts_page(main_frame: Frame, max_retries: int = 2) -> bool:
     """
     从任意 Maximo 页面导航到接收查询页面（接收单主页）
@@ -167,11 +205,18 @@ async def navigate_to_receipts_page(main_frame: Frame, max_retries: int = 2) -> 
             logger.warning("接收子菜单点击失败，跳过本次尝试")
             continue
 
-        # 额外等待页面加载
-        await asyncio.sleep(1)
-
-        if await check_if_on_receipts_search_page(main_frame):
+        # 轮询等待页面加载（最多 10 秒），比固定 sleep 更可靠
+        if await _poll_for_receipts_page(main_frame, timeout=10.0):
             logger.success("成功导航到接收查询页面")
+            return True
+
+        # 仍未到达列表页：可能停留在详情页，尝试点击"返回列表/新建查询"
+        logger.warning("菜单点击后未到达列表页，尝试点击返回列表按钮...")
+        await _try_click_list_or_newsearch(main_frame)
+
+        # 再给 5 秒轮询
+        if await _poll_for_receipts_page(main_frame, timeout=5.0):
+            logger.success("通过返回列表按钮成功到达接收查询页面")
             return True
 
         logger.warning("点击菜单后仍未到达接收查询页面")
