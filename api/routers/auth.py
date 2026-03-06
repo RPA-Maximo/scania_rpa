@@ -14,9 +14,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Request
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Annotated, Optional
 
 from config.auth_manager import auth_manager
 
@@ -75,11 +75,26 @@ async def update_auth_from_fields(request: FieldsUpdateRequest):
 
 
 @router.post("/curl-text", summary="通过纯文本 cURL 命令更新认证（无需 JSON 包装）")
-async def update_auth_from_curl_raw(request: Request):
+async def update_auth_from_curl_raw(
+    curl_text: Annotated[
+        str,
+        Body(
+            media_type="text/plain",
+            description="从浏览器 Copy as cURL (bash) 复制的完整 cURL 命令，直接粘贴纯文本",
+            example=(
+                "curl 'https://main.manage.scania-acc.suite.maximo.com/maximo/maximo.jsp' "
+                "-b 'LtpaToken2=xxx; x-refresh-token=yyy' "
+                "--data-raw 'csrftoken=abc123'"
+            ),
+        ),
+    ],
+):
     """
     直接粘贴 cURL (bash) 纯文本，**无需包装成 JSON**。
 
-    适合在 Swagger UI 外部（curl / Postman）直接发送时使用：
+    在 Swagger UI 中点击 "Try it out"，在文本框中粘贴 cURL 命令后点击 Execute。
+
+    也可在命令行使用：
     ```
     curl -X POST http://localhost:8000/api/auth/curl-text \\
          -H "Content-Type: text/plain" \\
@@ -87,13 +102,11 @@ async def update_auth_from_curl_raw(request: Request):
     ```
 
     与 `/api/auth/curl` 的区别：
-    - 本接口接受 `Content-Type: text/plain` 的原始文本 body
+    - 本接口接受 `Content-Type: text/plain` 的原始文本 body（Swagger UI 显示文本框）
     - `/api/auth/curl` 接受 `{"curl_text": "..."}` JSON 格式
     """
-    body = await request.body()
-    if not body:
+    if not curl_text or not curl_text.strip():
         raise HTTPException(status_code=400, detail="请求 body 为空，请粘贴 cURL 命令文本")
-    curl_text = body.decode("utf-8", errors="replace")
     result = auth_manager.update_from_curl(curl_text)
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["message"])
