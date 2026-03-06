@@ -3,16 +3,20 @@ PO 增量同步管理 API 路由
 
 提供对自动同步调度器的完整控制：状态查询、手动触发、参数调整。
 """
+import io
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.sync.po_sync_service import po_sync_service, po_sync_scheduler
+from src.utils.db import get_connection
 
 router = APIRouter(prefix="/api/sync/po", tags=["PO 增量同步"])
 
@@ -148,3 +152,140 @@ async def update_sync_interval(request: IntervalRequest):
         'interval_seconds': seconds,
         'scheduler_status': po_sync_scheduler.get_status(),
     }
+
+
+@router.get("/export", summary="导出采购订单为 Excel")
+async def export_po_excel(
+    limit: int = Query(1000, ge=1, le=10000, description="最多导出条数（默认 1000，最大 10000）"),
+):
+    """
+    将数据库中已同步的采购订单导出为 Excel 文件，包含两个工作表：
+
+    - **采购订单**：主表信息（PO 号、供应商、收货方、创建时间等）
+    - **采购明细**：子表行项目（物料号、描述、数量、单价等）
+
+    点击 Swagger UI 的 **Download file** 按钮即可保存文件。
+    """
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment
+    except ImportError:
+        raise HTTPException(status_code=500, detail="缺少 openpyxl 依赖，请执行: pip install openpyxl")
+
+    try:
+        conn = get_connection()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"数据库连接失败: {e}")
+
+    try:
+        cursor = conn.cursor(dictionary=True)
+
+        # ── 查询主表 ──────────────────────────────────────────────────────
+        cursor.execute(f"""
+            SELECT
+                id,
+                code            AS `PO号`,
+                description     AS `描述`,
+                status          AS `状态`,
+                order_date      AS `订单日期`,
+                request_date    AS `需求日期`,
+                total_cost      AS `总金额`,
+                currency        AS `币种`,
+                supplier_name   AS `供应商名称`,
+                vendor_code     AS `供应商代码`,
+                supplier_address AS `供应商地址`,
+                supplier_city   AS `供应商城市`,
+                supplier_contact AS `供应商联系人`,
+                supplier_phone  AS `供应商电话`,
+                supplier_email  AS `供应商邮箱`,
+                company_name    AS `收货公司`,
+                street_address  AS `收货地址`,
+                city            AS `收货城市`,
+                postal_code     AS `邮编`,
+                country         AS `国家`,
+                create_time     AS `同步时间`
+            FROM purchase_order
+            WHERE del_flag = 0
+            ORDER BY create_time DESC
+            LIMIT {limit}
+        """)
+        headers = cursor.fetchall()
+
+        # ── 查询子表 ──────────────────────────────────────────────────────
+        if headers:
+            po_ids = [r['id'] for r in headers]
+            placeholders = ','.join(['%s'] * len(po_ids))
+            cursor.execute(f"""
+                SELECT
+                    p.code          AS `PO号`,
+                    b.number        AS `行号`,
+                    b.sku_names     AS `物料描述`,
+                    b.model_num     AS `型号`,
+                    b.size_info     AS `规格`,
+                    b.qty           AS `数量`,
+                    b.ordering_unit AS `单位`,
+                    b.unit_cost     AS `单价`,
+                    b.line_cost     AS `行合计`,
+                    b.receive_status AS `收货状态`,
+                    b.target_container AS `目标货柜`,
+                    b.form_id       AS `主表ID`
+                FROM purchase_order_bd b
+                JOIN purchase_order p ON p.id = b.form_id
+                WHERE b.form_id IN ({placeholders})
+                ORDER BY b.form_id, b.number
+            """, po_ids)
+            details = cursor.fetchall()
+        else:
+            details = []
+
+        cursor.close()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"查询数据失败: {e}")
+    finally:
+        conn.close()
+
+    # ── 生成 Excel ────────────────────────────────────────────────────────
+    wb = openpyxl.Workbook()
+
+    header_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True)
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    def _write_sheet(ws, rows: list):
+        if not rows:
+            ws.append(["暂无数据"])
+            return
+        # 写表头（去掉内部 id/del_flag 字段）
+        cols = [k for k in rows[0].keys() if k not in ('id', 'del_flag', '主表ID')]
+        ws.append(cols)
+        for cell in ws[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = center
+        ws.row_dimensions[1].height = 22
+        # 写数据
+        for row in rows:
+            ws.append([row.get(c) for c in cols])
+        # 自适应列宽（最大 40）
+        for col in ws.columns:
+            max_len = max((len(str(c.value or '')) for c in col), default=8)
+            ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 40)
+
+    ws1 = wb.active
+    ws1.title = "采购订单"
+    _write_sheet(ws1, headers)
+
+    ws2 = wb.create_sheet("采购明细")
+    _write_sheet(ws2, details)
+
+    # ── 输出为字节流 ──────────────────────────────────────────────────────
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    filename = f"PO_Export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
