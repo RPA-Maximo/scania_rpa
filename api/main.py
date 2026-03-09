@@ -17,11 +17,14 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from rpa.keepalive import KeepaliveManager
 from api.routers.auth import router as auth_router
 from api.routers.scraper import router as scraper_router
 from api.routers.settings import router as settings_router
 from api.routers.sync import router as sync_router
+from api.routers.mr import router as mr_router
 from src.sync.po_sync_service import po_sync_scheduler
 
 # 保活管理器（全局单例）
@@ -60,6 +63,18 @@ app.include_router(auth_router)
 app.include_router(scraper_router)
 app.include_router(settings_router)
 app.include_router(sync_router)
+app.include_router(mr_router)
+
+# 静态文件（前端页面）
+_static_dir = PROJECT_ROOT / "api" / "static"
+if _static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+
+
+@app.get("/mr", include_in_schema=False)
+async def mr_wms_page():
+    """出库单 WMS 前端页面"""
+    return FileResponse(str(_static_dir / "mr_wms.html"))
 
 import logging
 

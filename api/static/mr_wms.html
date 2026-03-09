@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WMS 出库单（物料需求单）</title>
+  <style>
+    :root {
+      --primary: #1976d2;
+      --primary-dark: #1256a3;
+      --danger: #e53935;
+      --warn-bg: #fff3cd;
+      --warn-border: #ffc107;
+      --success: #388e3c;
+      --gray: #757575;
+      --border: #e0e0e0;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: #f5f5f5; color: #212121; }
+
+    /* ── 顶栏 ── */
+    header {
+      background: var(--primary);
+      color: #fff;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 200;
+      box-shadow: 0 2px 4px rgba(0,0,0,.2);
+    }
+    header h1 { font-size: 18px; font-weight: 600; }
+    #warn-badge {
+      background: var(--danger);
+      color: #fff;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 13px;
+      display: none;
+      cursor: pointer;
+    }
+
+    /* ── 工具栏 ── */
+    .toolbar {
+      background: #fff;
+      padding: 12px 20px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+    }
+    .toolbar input {
+      flex: 1;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 14px;
+    }
+    .toolbar select {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 14px;
+    }
+    .btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover { background: var(--primary-dark); }
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-outline {
+      background: #fff;
+      color: var(--primary);
+      border: 1px solid var(--primary);
+    }
+    .btn-sm { padding: 5px 10px; font-size: 12px; }
+
+    /* ── 主表格 ── */
+    .table-wrap {
+      padding: 16px 20px;
+      overflow-x: auto;
+    }
+    table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+    thead { background: var(--primary); color: #fff; }
+    th, td { padding: 11px 14px; text-align: left; font-size: 13px; border-bottom: 1px solid var(--border); }
+    tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: #f0f4ff; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge-entered { background: #e3f2fd; color: #1565c0; }
+    .badge-complete { background: #e8f5e9; color: #2e7d32; }
+    .badge-wappr    { background: #fff8e1; color: #f57f17; }
+
+    /* ── 分页 ── */
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 12px 20px;
+      font-size: 13px;
+      color: var(--gray);
+    }
+    .pagination button { padding: 6px 12px; border-radius: 4px; border: 1px solid var(--border); background: #fff; cursor: pointer; }
+    .pagination button:disabled { opacity: .4; cursor: default; }
+
+    /* ── 弹窗通用 ── */
+    .modal-overlay {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.5);
+      z-index: 500;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 8px 32px rgba(0,0,0,.2);
+      width: 92%;
+      max-width: 900px;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .modal-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .modal-header h2 { font-size: 16px; font-weight: 600; }
+    .modal-body { padding: 16px 20px; overflow-y: auto; flex: 1; }
+    .modal-footer {
+      padding: 12px 20px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+    .close-btn { background: none; border: none; font-size: 20px; cursor: pointer; color: var(--gray); }
+
+    /* ── 主表详情区 ── */
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .info-item { background: #f9f9f9; border-radius: 6px; padding: 10px 12px; }
+    .info-label { font-size: 11px; color: var(--gray); margin-bottom: 4px; }
+    .info-value { font-size: 14px; font-weight: 500; }
+
+    /* ── 子表 ── */
+    .sub-table { margin-top: 12px; }
+    .sub-table h3 { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+    .sub-table table { font-size: 12px; }
+    .sub-table td, .sub-table th { padding: 8px 10px; }
+    .qty-not-met { color: var(--danger); font-weight: 600; }
+
+    /* ── 货柜选择弹窗 ── */
+    #bin-modal .modal { max-width: 500px; }
+    .bin-list { display: flex; flex-direction: column; gap: 8px; }
+    .bin-item {
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: border-color .15s;
+    }
+    .bin-item:hover, .bin-item.selected { border-color: var(--primary); background: #f0f4ff; }
+    .bin-item .bin-name { font-weight: 600; font-size: 14px; }
+    .bin-item .bin-code { font-size: 12px; color: var(--gray); }
+    .bin-item .bin-qty { font-size: 13px; color: var(--danger); font-weight: 600; }
+    #bin-count-bar {
+      margin-top: 12px;
+      padding: 10px 14px;
+      background: #f0f0f0;
+      border-radius: 20px;
+      text-align: center;
+      font-size: 14px;
+      color: var(--gray);
+    }
+
+    /* ── 警告浮层 ── */
+    #warn-panel {
+      display: none;
+      position: fixed;
+      top: 60px; right: 20px;
+      background: var(--warn-bg);
+      border: 1px solid var(--warn-border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      max-width: 320px;
+      z-index: 300;
+      box-shadow: 0 4px 12px rgba(0,0,0,.15);
+    }
+    #warn-panel h4 { font-size: 14px; color: #856404; margin-bottom: 8px; }
+    #warn-panel ul { list-style: disc; padding-left: 16px; font-size: 13px; color: #856404; }
+
+    .spinner {
+      display: inline-block;
+      width: 18px; height: 18px;
+      border: 2px solid #fff;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<!-- 顶栏 -->
+<header>
+  <h1>WMS 出库单（物料需求单）</h1>
+  <span id="warn-badge" onclick="toggleWarnPanel()">⚠ 数量不足</span>
+</header>
+
+<!-- 警告浮层 -->
+<div id="warn-panel">
+  <h4>⚠ 以下行出库数量不满足</h4>
+  <ul id="warn-list"></ul>
+</div>
+
+<!-- 工具栏 -->
+<div class="toolbar">
+  <input id="kw-input" type="text" placeholder="搜索 MR号 / 出库单号 / WO号…" onkeydown="if(event.key==='Enter')loadList()">
+  <select id="status-filter" onchange="loadList()">
+    <option value="">全部状态</option>
+    <option value="ENTERED">ENTERED</option>
+    <option value="WAPPR">WAPPR</option>
+    <option value="COMPLETE">COMPLETE</option>
+  </select>
+  <button class="btn btn-primary" onclick="loadList()">搜索</button>
+  <button class="btn btn-outline" onclick="showSyncModal()">↻ 同步 Maximo</button>
+</div>
+
+<!-- 主表格 -->
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>MR号</th>
+        <th>流水号（出库单号）</th>
+        <th>仓库</th>
+        <th>目标地址</th>
+        <th>需求日期</th>
+        <th>WO号</th>
+        <th>状态</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody id="list-body">
+      <tr><td colspan="8" style="text-align:center;padding:30px;color:#999">加载中…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- 分页 -->
+<div class="pagination">
+  <span id="total-label">共 0 条</span>
+  <button id="prev-btn" onclick="changePage(-1)" disabled>上一页</button>
+  <span id="page-label">第 1 页</span>
+  <button id="next-btn" onclick="changePage(1)">下一页</button>
+</div>
+
+<!-- ─── 详情弹窗 ─── -->
+<div class="modal-overlay" id="detail-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="detail-title">出库单详情</h2>
+      <button class="close-btn" onclick="closeModal('detail-modal')">×</button>
+    </div>
+    <div class="modal-body">
+      <!-- 主表信息 -->
+      <div class="info-grid" id="detail-header"></div>
+      <!-- 子表 -->
+      <div class="sub-table">
+        <h3>物料明细</h3>
+        <div style="overflow-x:auto">
+          <table>
+            <thead>
+              <tr>
+                <th>行号</th>
+                <th>项目</th>
+                <th>描述</th>
+                <th>当前余量</th>
+                <th>可用量</th>
+                <th>需求数量</th>
+                <th>运输日期</th>
+                <th>单位</th>
+                <th>仓位</th>
+                <th>WO号</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="detail-lines"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('detail-modal')">关闭</button>
+      <button class="btn btn-primary" id="issue-btn" onclick="submitIssue()">确认出库</button>
+      <button class="btn btn-danger" id="writeback-btn" onclick="showWritebackDialog()" style="display:none">回传 Maximo</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── 货柜选择弹窗 ─── -->
+<div class="modal-overlay" id="bin-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>选择货柜</h2>
+      <button class="close-btn" onclick="closeModal('bin-modal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="margin-bottom:12px">
+        <input id="bin-search" type="text" placeholder="扫描或输入货柜编码…"
+          style="width:100%;border:1px solid #ddd;border-radius:6px;padding:9px 12px;font-size:14px"
+          oninput="filterBins()" />
+      </div>
+      <div class="bin-list" id="bin-list"></div>
+      <div id="bin-count-bar">0 个货柜</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('bin-modal')">取消</button>
+      <button class="btn btn-primary" onclick="confirmBinSelect()">确认选择</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── 同步弹窗 ─── -->
+<div class="modal-overlay" id="sync-modal">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-header">
+      <h2>同步 Maximo 出库单</h2>
+      <button class="close-btn" onclick="closeModal('sync-modal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <label style="font-size:13px">状态筛选（逗号分隔）
+          <input id="sync-status" type="text" value="ENTERED,WAPPR"
+            style="width:100%;margin-top:4px;border:1px solid #ddd;border-radius:6px;padding:8px 10px;font-size:14px">
+        </label>
+        <label style="font-size:13px">最多抓取页数
+          <input id="sync-pages" type="number" value="5" min="1" max="50"
+            style="width:100%;margin-top:4px;border:1px solid #ddd;border-radius:6px;padding:8px 10px;font-size:14px">
+        </label>
+        <label style="font-size:13px">每页条数
+          <input id="sync-psize" type="number" value="20" min="1" max="100"
+            style="width:100%;margin-top:4px;border:1px solid #ddd;border-radius:6px;padding:8px 10px;font-size:14px">
+        </label>
+        <div id="sync-result" style="font-size:13px;color:#388e3c;display:none"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('sync-modal')">取消</button>
+      <button class="btn btn-primary" id="sync-confirm-btn" onclick="doSync()">开始同步</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '';   // 同源，无需前缀
+
+// ── 状态 ──────────────────────────────────────────────────────────────────────
+let currentPage = 1;
+let totalCount = 0;
+const PAGE_SIZE = 20;
+
+let currentHeaderId = null;
+let currentLines = [];          // 当前弹窗中的子表行
+let unsatisfiedLines = [];      // 本次出库未满足的行
+
+let binTargetLineId = null;     // 正在选择货柜的行 ID
+let allBins = [];               // 货柜列表（用于筛选）
+let selectedBinCode = '';
+
+// ── 列表加载 ─────────────────────────────────────────────────────────────────
+async function loadList() {
+  currentPage = 1;
+  await fetchList();
+}
+
+async function fetchList() {
+  const kw = document.getElementById('kw-input').value.trim();
+  const status = document.getElementById('status-filter').value;
+  const params = new URLSearchParams({
+    page: currentPage,
+    page_size: PAGE_SIZE,
+  });
+  if (kw) params.set('keyword', kw);
+  if (status) params.set('status', status);
+
+  const tbody = document.getElementById('list-body');
+  tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:20px;color:#999">加载中…</td></tr>';
+
+  try {
+    const resp = await fetch(`${API}/api/mr?${params}`);
+    const data = await resp.json();
+    totalCount = data.total || 0;
+
+    document.getElementById('total-label').textContent = `共 ${totalCount} 条`;
+    document.getElementById('page-label').textContent = `第 ${currentPage} 页`;
+    document.getElementById('prev-btn').disabled = currentPage <= 1;
+    document.getElementById('next-btn').disabled = currentPage * PAGE_SIZE >= totalCount;
+
+    if (!data.items || data.items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;color:#999">暂无数据</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = data.items.map(row => `
+      <tr>
+        <td>${row.mr_number || '—'}</td>
+        <td><strong>${row.serial_number || '—'}</strong></td>
+        <td>${row.warehouse || '—'}</td>
+        <td>${row.target_address || '—'}</td>
+        <td>${row.required_date || '—'}</td>
+        <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${row.wo_numbers || ''}">${row.wo_numbers || '—'}</td>
+        <td><span class="badge badge-${(row.status||'').toLowerCase()}">${row.status || '—'}</span></td>
+        <td><button class="btn btn-outline btn-sm" onclick="openDetail(${row.id})">详情</button></td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:20px;color:red">加载失败: ${e.message}</td></tr>`;
+  }
+}
+
+async function changePage(delta) {
+  const newPage = currentPage + delta;
+  const maxPage = Math.ceil(totalCount / PAGE_SIZE);
+  if (newPage < 1 || newPage > maxPage) return;
+  currentPage = newPage;
+  await fetchList();
+}
+
+// ── 详情弹窗 ─────────────────────────────────────────────────────────────────
+async function openDetail(headerId) {
+  currentHeaderId = headerId;
+  unsatisfiedLines = [];
+
+  try {
+    const resp = await fetch(`${API}/api/mr/${headerId}`);
+    const data = await resp.json();
+    currentLines = data.lines || [];
+
+    // 主表信息
+    const h = data.header;
+    document.getElementById('detail-title').textContent = `出库单详情 — ${h.issue_number || ''}`;
+    document.getElementById('detail-header').innerHTML = `
+      <div class="info-item"><div class="info-label">出库单号</div><div class="info-value">${h.issue_number || '—'}</div></div>
+      <div class="info-item"><div class="info-label">MR号</div><div class="info-value">${h.mr_number || '—'}</div></div>
+      <div class="info-item"><div class="info-label">使用情况类型</div><div class="info-value">${h.usage_type || '—'}</div></div>
+      <div class="info-item"><div class="info-label">仓库（不可修改）</div><div class="info-value">${h.warehouse || '—'}</div></div>
+      <div class="info-item"><div class="info-label">目标地址</div><div class="info-value">${h.target_address || '—'}</div></div>
+      <div class="info-item"><div class="info-label">需求日期</div><div class="info-value">${h.required_date || '—'}</div></div>
+      <div class="info-item"><div class="info-label">状态</div><div class="info-value">${h.status || '—'}</div></div>
+      <div class="info-item"><div class="info-label">WO号</div><div class="info-value" style="word-break:break-all">${h.wo_numbers || '—'}</div></div>
+    `;
+
+    // 子表
+    renderLines(data.lines);
+
+    // 显示"回传 Maximo"按钮（若有未满足行）
+    const wbBtn = document.getElementById('writeback-btn');
+    wbBtn.style.display = data.unsatisfied_count > 0 ? '' : 'none';
+
+    document.getElementById('detail-modal').classList.add('active');
+  } catch (e) {
+    alert('加载详情失败: ' + e.message);
+  }
+}
+
+function renderLines(lines) {
+  const tbody = document.getElementById('detail-lines');
+  tbody.innerHTML = lines.map(l => {
+    const notMet = !l.is_satisfied && l.issued_qty != null;
+    return `
+      <tr>
+        <td>${l.line_number ?? '—'}</td>
+        <td>${l.item_number || '—'}</td>
+        <td style="max-width:160px">${l.description || '—'}</td>
+        <td>${l.current_balance ?? '—'}</td>
+        <td>${l.available_qty ?? '—'}</td>
+        <td class="${notMet ? 'qty-not-met' : ''}">${l.required_qty ?? '—'}</td>
+        <td>${l.transport_date || '—'}</td>
+        <td>PCS</td>
+        <td>
+          <span id="bin-text-${l.id}">${l.bin_location || '（未设置）'}</span>
+          <button class="btn btn-outline btn-sm" style="margin-left:6px" onclick="openBinSelect(${l.id},'${l.item_number}')">选择</button>
+        </td>
+        <td>${l.wo_number || '—'}</td>
+        <td>
+          <input type="number" id="issued-${l.id}" value="${l.issued_qty ?? l.required_qty ?? ''}"
+            style="width:70px;border:1px solid #ddd;border-radius:4px;padding:4px 6px;font-size:12px"
+            min="0" step="0.01">
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+// ── 货柜选择 ─────────────────────────────────────────────────────────────────
+async function openBinSelect(lineId, itemNumber) {
+  binTargetLineId = lineId;
+  selectedBinCode = '';
+
+  document.getElementById('bin-search').value = '';
+  document.getElementById('bin-list').innerHTML = '<div style="text-align:center;padding:20px;color:#999">加载中…</div>';
+  document.getElementById('bin-modal').classList.add('active');
+
+  try {
+    const resp = await fetch(`${API}/api/mr/${currentHeaderId}/bins/${itemNumber}`);
+    const data = await resp.json();
+    allBins = data.bins || [];
+
+    // 在推荐货柜上显示默认数量标注
+    if (!data.is_satisfied && allBins.length > 0) {
+      allBins[0]._qty_warn = true;   // 第一个批次最老，数量不足，标红
+    }
+
+    renderBins(allBins, data.recommended_bin);
+    document.getElementById('bin-count-bar').textContent = `${allBins.length} 个货柜`;
+
+    if (!data.is_satisfied) {
+      showWarnForBin(data.required_qty, data.bins);
+    }
+  } catch (e) {
+    document.getElementById('bin-list').innerHTML = `<div style="color:red;padding:12px">加载失败: ${e.message}</div>`;
+  }
+}
+
+function renderBins(bins, recommendedCode) {
+  const list = document.getElementById('bin-list');
+  if (!bins.length) {
+    list.innerHTML = '<div style="text-align:center;padding:20px;color:#999">该物料暂无货柜数据</div>';
+    return;
+  }
+  list.innerHTML = bins.map(b => `
+    <div class="bin-item ${b.bin_code === recommendedCode ? 'selected' : ''}"
+         onclick="selectBin('${b.bin_code}', this)"
+         data-code="${b.bin_code}" data-name="${b.bin_name}">
+      <div>
+        <div class="bin-name">${b.bin_name}</div>
+        <div class="bin-code">编码:${b.bin_code}${b.batch_number ? ' · 批次:' + b.batch_number : ''}</div>
+      </div>
+      <div class="bin-qty" style="${b._qty_warn ? 'color:red' : 'color:#333'}">
+        数量：${b.quantity}
+      </div>
+    </div>
+  `).join('');
+  if (recommendedCode) selectedBinCode = recommendedCode;
+}
+
+function selectBin(code, el) {
+  document.querySelectorAll('#bin-list .bin-item').forEach(e => e.classList.remove('selected'));
+  el.classList.add('selected');
+  selectedBinCode = code;
+}
+
+function filterBins() {
+  const kw = document.getElementById('bin-search').value.toLowerCase();
+  const filtered = allBins.filter(b =>
+    b.bin_code.toLowerCase().includes(kw) || (b.bin_name || '').toLowerCase().includes(kw)
+  );
+  renderBins(filtered, selectedBinCode);
+  document.getElementById('bin-count-bar').textContent = `${filtered.length} 个货柜`;
+}
+
+async function confirmBinSelect() {
+  if (!selectedBinCode) { alert('请先选择一个货柜'); return; }
+  try {
+    const resp = await fetch(`${API}/api/mr/${currentHeaderId}/lines/${binTargetLineId}/bin`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ bin_location: selectedBinCode }),
+    });
+    if (resp.ok) {
+      document.getElementById(`bin-text-${binTargetLineId}`).textContent = selectedBinCode;
+      closeModal('bin-modal');
+    } else {
+      alert('保存失败');
+    }
+  } catch (e) {
+    alert('保存失败: ' + e.message);
+  }
+}
+
+function showWarnForBin(required, bins) {
+  const total = bins.reduce((s, b) => s + (b.quantity || 0), 0);
+  if (total < required) {
+    setWarn([`数量不足：需求 ${required}，可用合计 ${total.toFixed(2)}`]);
+  }
+}
+
+// ── 出库确认 ─────────────────────────────────────────────────────────────────
+async function submitIssue() {
+  const lines = currentLines.map(l => ({
+    line_id: l.id,
+    issued_qty: parseFloat(document.getElementById(`issued-${l.id}`)?.value || l.required_qty || 0),
+    bin_location: document.getElementById(`bin-text-${l.id}`)?.textContent?.trim() || '',
+  }));
+
+  const btn = document.getElementById('issue-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>提交中…';
+
+  try {
+    const resp = await fetch(`${API}/api/mr/${currentHeaderId}/issue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lines, writeback: true }),
+    });
+    const result = await resp.json();
+
+    if (result.has_warning) {
+      // 右上角警告
+      const msgs = result.unsatisfied_lines.map(u =>
+        `物料 ${u.item_number}: 需求 ${u.required_qty}，实发 ${u.issued_qty}`
+      );
+      setWarn(msgs);
+      // 显示回传按钮
+      document.getElementById('writeback-btn').style.display = '';
+    } else {
+      clearWarn();
+    }
+
+    alert(result.message);
+    closeModal('detail-modal');
+    await fetchList();
+  } catch (e) {
+    alert('出库失败: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '确认出库';
+  }
+}
+
+// ── 回传 Maximo ──────────────────────────────────────────────────────────────
+function showWritebackDialog() {
+  const serial = prompt('请输入 Maximo 新建的流水号（可留空以自动刷新状态）：', '');
+  doWriteback(serial);
+}
+
+async function doWriteback(newSerial) {
+  try {
+    const resp = await fetch(`${API}/api/mr/${currentHeaderId}/writeback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ new_serial: newSerial || null }),
+    });
+    const result = await resp.json();
+    alert(result.message || '操作完成');
+    if (result.success) {
+      await openDetail(currentHeaderId);   // 刷新详情
+      await fetchList();
+    }
+  } catch (e) {
+    alert('回传失败: ' + e.message);
+  }
+}
+
+// ── 同步 ─────────────────────────────────────────────────────────────────────
+function showSyncModal() {
+  document.getElementById('sync-result').style.display = 'none';
+  document.getElementById('sync-modal').classList.add('active');
+}
+
+async function doSync() {
+  const btn = document.getElementById('sync-confirm-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>同步中…';
+
+  const body = {
+    status_filter: document.getElementById('sync-status').value,
+    max_pages: parseInt(document.getElementById('sync-pages').value),
+    page_size: parseInt(document.getElementById('sync-psize').value),
+  };
+
+  try {
+    const resp = await fetch(`${API}/api/mr/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const result = await resp.json();
+    const el = document.getElementById('sync-result');
+    el.style.display = '';
+    const s = result.stats || {};
+    el.textContent = `同步完成：新增 ${s.inserted||0} 条，更新 ${s.updated||0} 条，跳过 ${s.skipped||0} 条`;
+    await fetchList();
+  } catch (e) {
+    alert('同步失败: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '开始同步';
+  }
+}
+
+// ── 警告管理 ─────────────────────────────────────────────────────────────────
+function setWarn(messages) {
+  unsatisfiedLines = messages;
+  const badge = document.getElementById('warn-badge');
+  badge.style.display = '';
+  badge.textContent = `⚠ ${messages.length} 行数量不足`;
+  document.getElementById('warn-list').innerHTML = messages.map(m => `<li>${m}</li>`).join('');
+}
+
+function clearWarn() {
+  unsatisfiedLines = [];
+  document.getElementById('warn-badge').style.display = 'none';
+  document.getElementById('warn-panel').style.display = 'none';
+}
+
+function toggleWarnPanel() {
+  const p = document.getElementById('warn-panel');
+  p.style.display = p.style.display === 'none' ? '' : 'none';
+}
+
+// ── 弹窗控制 ─────────────────────────────────────────────────────────────────
+function closeModal(id) {
+  document.getElementById(id).classList.remove('active');
+}
+document.querySelectorAll('.modal-overlay').forEach(el => {
+  el.addEventListener('click', e => { if (e.target === el) el.classList.remove('active'); });
+});
+
+// ── 初始化 ───────────────────────────────────────────────────────────────────
+loadList();
+</script>
+</body>
+</html>
