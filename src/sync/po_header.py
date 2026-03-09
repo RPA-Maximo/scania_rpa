@@ -86,15 +86,16 @@ def map_header_data(cursor, po_data: Dict) -> Dict:
         
         result[db_field] = value
     
-    # 处理供应商信息：从 sys_department 表查询
+    # 供应商名称：直接使用 Maximo vendorname 字段，不依赖 sys_department 查表
+    result['supplier_name'] = po_data.get('vendorname') or None
+
+    # owner_dept_id：仍通过 sys_department 查询（用于部门关联）
     vendor_code = po_data.get('vendor')
     if vendor_code:
-        supplier_id, supplier_name = get_supplier_info(cursor, vendor_code)
+        supplier_id, _ = get_supplier_info(cursor, vendor_code)
         result['owner_dept_id'] = supplier_id
-        result['supplier_name'] = supplier_name
     else:
         result['owner_dept_id'] = None
-        result['supplier_name'] = None
 
     # ── 供应商扩展信息（来自 Maximo PO 供应商字段）────────────────────────
     vc = VENDOR_FIELD_CANDIDATES
