@@ -33,13 +33,14 @@ VENDOR_FIELD_CANDIDATES = {
     'supplier_email':   ['cxpoemail', 'venemail'],  # cxpoemail = 接收PO的邮箱
 }
 
-# Maximo MXAPIPO 收货方字段候选名
-SHIPTO_FIELD_CANDIDATES = {
-    'company_name':     ['shiptoname', 'shiptocomp'],
-    'street_address_1': ['shiptoaddress1', 'shiptoaddr1'],
-    'street_address_2': ['shiptoaddress2', 'shiptoaddr2'],
-    'postal_code':      ['shiptozip', 'shiptopostalcode'],
-    'city':             ['shiptocity'],
+# Maximo MXAPIPO 收款方（Bill To）字段候选名
+# 对应 Maximo UI "收货方/收款人" 标签页右侧"收款方"区域
+BILLTO_FIELD_CANDIDATES = {
+    'company_name':     ['billtocomp', 'billtoname'],
+    'street_address_1': ['billtoaddress1', 'billtoaddr1'],
+    'street_address_2': ['billtoaddress2', 'billtoaddr2'],
+    'postal_code':      ['billtozip', 'billtopostalcode'],
+    'city':             ['billtocity'],
     # country: 固定为 China
 }
 

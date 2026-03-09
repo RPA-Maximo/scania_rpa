@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.utils.db import generate_id, format_datetime
-from src.utils.mapper import PO_HEADER_MAPPING, VENDOR_FIELD_CANDIDATES, SHIPTO_FIELD_CANDIDATES
+from src.utils.mapper import PO_HEADER_MAPPING, VENDOR_FIELD_CANDIDATES, BILLTO_FIELD_CANDIDATES
 
 
 def _first_nonempty(data: dict, keys: list) -> str:
@@ -108,17 +108,17 @@ def map_header_data(cursor, po_data: Dict) -> Dict:
     result['supplier_phone']   = _first_nonempty(po_data, vc['supplier_phone']) or None
     result['supplier_email']   = _first_nonempty(po_data, vc['supplier_email']) or None
 
-    # ── 收货方信息（shipto）───────────────────────────────────────────────
-    sc = SHIPTO_FIELD_CANDIDATES
-    result['company_name'] = _first_nonempty(po_data, sc['company_name']) or None
+    # ── 收款方信息（billto）───────────────────────────────────────────────
+    bc = BILLTO_FIELD_CANDIDATES
+    result['company_name'] = _first_nonempty(po_data, bc['company_name']) or None
 
     # 街道地址：合并 address1 和 address2
-    addr1 = _first_nonempty(po_data, sc['street_address_1'])
-    addr2 = _first_nonempty(po_data, sc['street_address_2'])
+    addr1 = _first_nonempty(po_data, bc['street_address_1'])
+    addr2 = _first_nonempty(po_data, bc['street_address_2'])
     result['street_address'] = ' '.join(filter(None, [addr1, addr2])) or None
 
-    result['postal_code'] = _first_nonempty(po_data, sc['postal_code']) or None
-    result['city']        = _first_nonempty(po_data, sc['city']) or None
+    result['postal_code'] = _first_nonempty(po_data, bc['postal_code']) or None
+    result['city']        = _first_nonempty(po_data, bc['city']) or None
     result['country']     = 'China'  # 固定值
 
     # 联系人、联系电话、电子邮件、接收人：业务要求不抓，留空

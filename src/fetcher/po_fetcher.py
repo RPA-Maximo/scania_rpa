@@ -98,11 +98,11 @@ def fetch_po_by_number(po_number: str, save_to_file: bool = True) -> Optional[di
             'vencontact,'
             'venphone,'
             'venemail,cxpoemail,'
-            'shiptoname,shiptocomp,'
-            'shiptoaddress1,shiptoaddr1,'
-            'shiptoaddress2,shiptoaddr2,'
-            'shiptocity,'
-            'shiptozip,shiptopostalcode'
+            'billtocomp,billtoname,'
+            'billtoaddress1,billtoaddr1,'
+            'billtoaddress2,billtoaddr2,'
+            'billtocity,'
+            'billtozip,billtopostalcode'
         ),
         'oslc.where': f'ponum="{po_number}"',
         '_dropnulls': 0,
@@ -227,11 +227,11 @@ def fetch_po_list(
                     'vencontact,'
                     'venphone,'
                     'venemail,cxpoemail,'
-                    'shiptoname,shiptocomp,'
-                    'shiptoaddress1,shiptoaddr1,'
-                    'shiptoaddress2,shiptoaddr2,'
-                    'shiptocity,'
-                    'shiptozip,shiptopostalcode'
+                    'billtocomp,billtoname,'
+                    'billtoaddress1,billtoaddr1,'
+                    'billtoaddress2,billtoaddr2,'
+                    'billtocity,'
+                    'billtozip,billtopostalcode'
                 ),
                 'oslc.pageSize': page_size,
                 '_dropnulls': 0,
