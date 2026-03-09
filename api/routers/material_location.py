@@ -2,7 +2,8 @@
 物料默认仓库仓位关联表 API 路由
 
 功能：
-  - Excel 文件导入（物料编号 + 默认货柜，仓库自动从 bin_inventory 推导）
+  - Excel 文件导入（物料编号 + 默认货柜，仓库自动从 bin_inventory/warehouse_bin 推导）
+  - 从 Maximo MXAPIINVENTORY 的 defaultbin 字段同步（优先级低于 Excel 手工导入）
   - 列表分页查询
   - 单条更新/删除
   - 下载 Excel 导入模板
@@ -14,7 +15,8 @@ Excel 格式（导入）：
   列 C: 备注       (可选)
 
 端点：
-  POST   /api/material-location/import    上传 Excel 导入
+  POST   /api/material-location/import    上传 Excel 导入（优先级最高）
+  POST   /api/material-location/sync      从 Maximo 同步缺省货柜（不覆盖 Excel 导入数据）
   GET    /api/material-location           分页查询列表
   PUT    /api/material-location/{id}      修改单条（货柜/备注）
   DELETE /api/material-location/{id}      软删除
@@ -36,6 +38,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from src.utils.db import get_connection, generate_id
+from src.sync.material_location_sync import sync_material_locations
 
 router = APIRouter(prefix="/api/material-location", tags=["material-location"])
 
@@ -55,14 +58,26 @@ def _match_col(header: str, aliases: set) -> bool:
 
 def _derive_warehouse(cursor, bin_code: str) -> Optional[str]:
     """
-    从 bin_inventory 表中查询 bin_code 对应的仓库编码。
-    同一 bin_code 可能出现在多条记录中，取第一条非空值。
+    按货柜编号推导仓库编码，查询顺序：
+      1. bin_inventory（含实时库存的货柜）
+      2. warehouse_bin （所有已同步的仓位主数据，无库存时仍有记录）
     """
     if not bin_code:
         return None
     cursor.execute(
         """SELECT warehouse FROM bin_inventory
-           WHERE bin_code=%s AND del_flag=0 AND warehouse IS NOT NULL AND warehouse!=''
+           WHERE bin_code=%s AND del_flag=0
+             AND warehouse IS NOT NULL AND warehouse!=''
+           LIMIT 1""",
+        (bin_code,),
+    )
+    row = cursor.fetchone()
+    if row:
+        return row["warehouse"]
+    # 回查仓位主数据表（Maximo 仓位同步，无论有无库存均有记录）
+    cursor.execute(
+        """SELECT warehouse FROM warehouse_bin
+           WHERE bin_code=%s AND del_flag=0
            LIMIT 1""",
         (bin_code,),
     )
@@ -71,9 +86,16 @@ def _derive_warehouse(cursor, bin_code: str) -> Optional[str]:
 
 
 def _derive_bin_name(cursor, bin_code: str) -> Optional[str]:
-    """从 bin_inventory 查 bin_name"""
+    """从 warehouse_bin 查货柜名称，无则回查 bin_inventory"""
     if not bin_code:
         return None
+    cursor.execute(
+        "SELECT bin_name FROM warehouse_bin WHERE bin_code=%s AND del_flag=0 LIMIT 1",
+        (bin_code,),
+    )
+    row = cursor.fetchone()
+    if row and row["bin_name"]:
+        return row["bin_name"]
     cursor.execute(
         "SELECT bin_name FROM bin_inventory WHERE bin_code=%s AND del_flag=0 LIMIT 1",
         (bin_code,),
@@ -177,7 +199,8 @@ async def import_from_excel(file: UploadFile = File(...)):
                 cursor.execute(
                     """UPDATE material_location SET
                         item_name=%s, warehouse=%s, bin_code=%s, bin_name=%s,
-                        remark=%s, import_time=%s, update_time=%s, del_flag=0
+                        remark=%s, import_time=%s, import_source='excel',
+                        update_time=%s, del_flag=0
                        WHERE id=%s""",
                     (item_name, warehouse, bin_code, bin_name, remark, now, now, existing["id"]),
                 )
@@ -186,8 +209,8 @@ async def import_from_excel(file: UploadFile = File(...)):
                 cursor.execute(
                     """INSERT INTO material_location
                         (id, item_number, item_name, warehouse, bin_code, bin_name,
-                         remark, import_time, create_time, del_flag)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,0)""",
+                         remark, import_time, import_source, create_time, del_flag)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'excel',%s,0)""",
                     (generate_id(), item_number, item_name, warehouse, bin_code,
                      bin_name, remark, now, now),
                 )
@@ -211,6 +234,52 @@ async def import_from_excel(file: UploadFile = File(...)):
             f"导入完成：新增 {stats['inserted']} 条，"
             f"更新 {stats['updated']} 条，"
             f"跳过 {stats['skipped']} 条"
+        ),
+    }
+
+
+class SyncRequest(BaseModel):
+    warehouse:  Optional[str] = None
+    site_id:    Optional[str] = None
+    max_pages:  int = 50
+    page_size:  int = 100
+
+
+@router.post("/sync", summary="从 Maximo 同步物料缺省货柜")
+def sync_from_maximo(req: SyncRequest):
+    """
+    从 Maximo MXAPIINVENTORY 的 **缺省货柜（defaultbin）** 字段自动同步到
+    `material_location` 表。
+
+    **优先级规则：**
+    - 已通过 Excel 手工导入的记录（`import_source='excel'`）不会被本接口覆盖
+    - 仅写入 `import_source='maximo'` 的记录或全新记录
+
+    **仓库推导逻辑（同 Excel 导入）：**
+    1. 查 `bin_inventory`（有实时库存的货柜）
+    2. 回查 `warehouse_bin`（Maximo 仓位主数据，无库存时仍有记录）
+    """
+    try:
+        stats = sync_material_locations(
+            warehouse=req.warehouse,
+            site_id=req.site_id,
+            max_pages=req.max_pages,
+            page_size=req.page_size,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Maximo 同步失败: {e}")
+
+    return {
+        "success":      True,
+        "inserted":     stats["inserted"],
+        "updated":      stats["updated"],
+        "skipped":      stats["skipped"],
+        "no_warehouse": stats["no_warehouse"],
+        "message": (
+            f"同步完成：新增 {stats['inserted']} 条，"
+            f"更新 {stats['updated']} 条，"
+            f"跳过 {stats['skipped']} 条"
+            + (f"，{stats['no_warehouse']} 条货柜未找到仓库" if stats["no_warehouse"] else "")
         ),
     }
 
