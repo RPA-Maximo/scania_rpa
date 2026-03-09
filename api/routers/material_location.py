@@ -158,9 +158,9 @@ async def import_from_excel(file: UploadFile = File(...)):
             remark_idx = i
 
     if item_idx is None:
-        raise HTTPException(status_code=400, detail="未找到"物料编号"列（支持列名：物料编号、item_number、itemnum）")
+        raise HTTPException(status_code=400, detail='未找到"物料编号"列（支持列名：物料编号、item_number、itemnum）')
     if bin_idx is None:
-        raise HTTPException(status_code=400, detail="未找到"货柜编号"列（支持列名：货柜编号、bin_code、binnum、缺省货柜）")
+        raise HTTPException(status_code=400, detail='未找到"货柜编号"列（支持列名：货柜编号、bin_code、binnum、缺省货柜）')
 
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
