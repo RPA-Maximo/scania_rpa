@@ -393,7 +393,7 @@ def import_warehouse_bins_excel(file_bytes: bytes) -> Dict:
 
     if wh_idx is None or bin_idx is None:
         return {"inserted": 0, "updated": 0, "skipped": 0,
-                "warnings": ["未找到"仓库编号"或"仓位编号"列"]}
+                "warnings": ["未找到\u201c仓库编号\u201d或\u201c仓位编号\u201d列"]}
 
     conn = get_connection()
     try:
