@@ -194,14 +194,15 @@ async def export_po_excel(
                 supplier_name   AS `供应商名称`,
                 vendor_code     AS `供应商代码`,
                 supplier_address AS `供应商地址`,
+                supplier_zip    AS `供应商邮政编码`,
                 supplier_city   AS `供应商城市`,
                 supplier_contact AS `供应商联系人`,
                 supplier_phone  AS `供应商电话`,
                 supplier_email  AS `供应商邮箱`,
-                company_name    AS `收货公司`,
-                street_address  AS `收货地址`,
-                city            AS `收货城市`,
-                postal_code     AS `邮编`,
+                company_name    AS `公司名称`,
+                street_address  AS `街道地址`,
+                city            AS `城市`,
+                postal_code     AS `邮政编码`,
                 country         AS `国家`,
                 create_time     AS `同步时间`
             FROM purchase_order
@@ -217,20 +218,24 @@ async def export_po_excel(
             placeholders = ','.join(['%s'] * len(po_ids))
             cursor.execute(f"""
                 SELECT
-                    p.code          AS `PO号`,
-                    b.number        AS `行号`,
-                    b.sku_names     AS `物料描述`,
-                    b.model_num     AS `型号`,
-                    b.size_info     AS `规格`,
-                    b.qty           AS `数量`,
-                    b.ordering_unit AS `单位`,
-                    b.unit_cost     AS `单价`,
-                    b.line_cost     AS `行合计`,
-                    b.receive_status AS `收货状态`,
-                    b.target_container AS `目标货柜`,
-                    b.form_id       AS `主表ID`
+                    p.code              AS `PO号`,
+                    b.number            AS `行号`,
+                    m.code              AS `物料编号`,
+                    b.sku_names         AS `物料描述`,
+                    b.model_num         AS `型号`,
+                    b.size_info         AS `规格`,
+                    b.qty               AS `数量`,
+                    b.ordering_unit     AS `单位`,
+                    b.unit_cost         AS `单价`,
+                    b.line_cost         AS `行合计`,
+                    b.receive_status    AS `收货状态`,
+                    b.target_container  AS `目标货柜`,
+                    w.code              AS `目标仓库`,
+                    b.form_id           AS `主表ID`
                 FROM purchase_order_bd b
                 JOIN purchase_order p ON p.id = b.form_id
+                LEFT JOIN material m ON m.id = b.sku
+                LEFT JOIN warehouse w ON w.id = b.warehouse
                 WHERE b.form_id IN ({placeholders})
                 ORDER BY b.form_id, b.number
             """, po_ids)
