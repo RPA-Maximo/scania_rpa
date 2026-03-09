@@ -2,9 +2,11 @@
 物料主数据 API 路由
 
 端点：
-  POST /api/items/sync          手动触发物料同步
-  GET  /api/items/sync/status   查看同步服务状态（含下次定时执行时间）
-  GET  /api/items               分页查询物料列表
+  POST /api/items/sync             手动触发物料同步
+  GET  /api/items/sync/status      查看同步服务状态（含下次定时执行时间）
+  GET  /api/items                  分页查询物料列表
+  POST /api/items/sync/cost        同步物料单价（Maximo LIFO/FIFO unitcost）
+  GET  /api/items/report/inventory 导出库存报表（物料+库存+单价+货值）Excel
 """
 import sys
 from datetime import datetime
@@ -15,9 +17,11 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from src.sync.item_sync import item_sync_service, item_sync_scheduler
+from src.sync.invcost_sync import sync_invcost, export_inventory_report_excel
 from src.utils.db import get_connection
 
 router = APIRouter(prefix="/api/items", tags=["items"])
@@ -143,3 +147,78 @@ def list_items(
     finally:
         cursor.close()
         conn.close()
+
+
+# ── 物料单价同步 ──────────────────────────────────────────────────────────────
+
+
+class InvcostSyncRequest(BaseModel):
+    warehouse:  Optional[str]  = None
+    """仓库过滤；None=全部仓库"""
+    item_numbers: Optional[List[str]] = None
+    """指定物料编号列表；None=全部"""
+    max_pages: int = 100
+    page_size: int = 50
+
+
+@router.post("/sync/cost", summary="同步物料单价")
+def trigger_invcost_sync(req: InvcostSyncRequest):
+    """
+    从 Maximo Inventory LIFO/FIFO Costs 同步物料单价（unitcost）到 material 表。
+
+    - 单价写入 material.unit_cost 字段
+    - 同时更新 avg_cost、last_cost、cost_date
+    - 若物料在多仓库有不同单价，取 cost_date 最新的那条
+    """
+    try:
+        stats = sync_invcost(
+            item_numbers=req.item_numbers,
+            warehouse=req.warehouse,
+            max_pages=req.max_pages,
+            page_size=req.page_size,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"单价同步失败: {e}")
+
+    return {
+        "success": True,
+        "stats":   stats,
+        "message": (
+            f"单价同步完成：更新 {stats['updated']} 条，"
+            f"未找到物料 {stats['not_found']} 条，"
+            f"跳过 {stats['skipped']} 条"
+        ),
+    }
+
+
+# ── 库存报表导出 ──────────────────────────────────────────────────────────────
+
+
+@router.get("/report/inventory", summary="导出库存报表 Excel")
+def export_inventory_report(
+    warehouse:   Optional[str] = Query(None, description="仓库过滤；None=全部"),
+    item_number: Optional[str] = Query(None, description="物料编号关键字过滤"),
+):
+    """
+    导出库存报表 Excel，包含：物料编号、物料名称、仓库、货柜、
+    批次号、库存数量、单价、货值（数量×单价）、入库日期。
+
+    > 请先执行 `POST /api/items/sync/cost` 同步物料单价，否则货值列为空。
+    """
+    try:
+        data = export_inventory_report_excel(
+            warehouse=warehouse,
+            item_number=item_number,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"报表导出失败: {e}")
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    wh_tag = f"_{warehouse}" if warehouse else ""
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename=inventory_report{wh_tag}_{ts}.xlsx"
+        },
+    )
