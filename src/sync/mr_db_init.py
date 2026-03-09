@@ -137,6 +137,24 @@ def init_mr_tables(conn):
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='货柜库存表(先进先出)'
         """)
 
+        # ── 物料默认仓库仓位关联表（Excel 导入维护）────────────────────────
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS `material_location` (
+                `id`          BIGINT        NOT NULL PRIMARY KEY COMMENT '主键ID',
+                `item_number` VARCHAR(100)  NOT NULL COMMENT '物料编号',
+                `item_name`   VARCHAR(200)  NULL     COMMENT '物料名称(冗余，方便查询)',
+                `warehouse`   VARCHAR(100)  NULL     COMMENT '默认仓库(由货柜推导)',
+                `bin_code`    VARCHAR(100)  NOT NULL COMMENT '默认货柜编号',
+                `bin_name`    VARCHAR(200)  NULL     COMMENT '货柜名称',
+                `remark`      VARCHAR(500)  NULL     COMMENT '备注',
+                `import_time` DATETIME      NULL     COMMENT '最近导入时间',
+                `create_time` DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `update_time` DATETIME      NULL     ON UPDATE CURRENT_TIMESTAMP,
+                `del_flag`    TINYINT       NOT NULL DEFAULT 0,
+                UNIQUE KEY `uq_item_number` (`item_number`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='物料默认仓库仓位关联表'
+        """)
+
         conn.commit()
         print("[OK] 出库单表结构初始化/更新完成")
     except Exception as e:
