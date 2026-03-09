@@ -25,7 +25,9 @@ from api.routers.scraper import router as scraper_router
 from api.routers.settings import router as settings_router
 from api.routers.sync import router as sync_router
 from api.routers.mr import router as mr_router
+from api.routers.items import router as items_router
 from src.sync.po_sync_service import po_sync_scheduler
+from src.sync.item_sync import item_sync_scheduler
 
 # 保活管理器（全局单例）
 keepalive_manager = KeepaliveManager()
@@ -35,8 +37,10 @@ keepalive_manager = KeepaliveManager()
 async def lifespan(app: FastAPI):
     """应用生命周期管理：启动/停止保活定时器和 PO 增量同步调度器"""
     keepalive_manager.start()
-    po_sync_scheduler.start()   # 启动 5 分钟增量同步
+    po_sync_scheduler.start()     # 启动 5 分钟 PO 增量同步
+    item_sync_scheduler.start()   # 启动每日凌晨物料全量同步
     yield
+    item_sync_scheduler.stop()
     po_sync_scheduler.stop()
     keepalive_manager.stop()
 
@@ -64,6 +68,7 @@ app.include_router(scraper_router)
 app.include_router(settings_router)
 app.include_router(sync_router)
 app.include_router(mr_router)
+app.include_router(items_router)
 
 # 静态文件（前端页面）
 _static_dir = PROJECT_ROOT / "api" / "static"
