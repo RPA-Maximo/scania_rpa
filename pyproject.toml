@@ -12,5 +12,6 @@ dependencies = [
     "playwright>=1.49.0",
     "fastapi>=0.115.0",
     "uvicorn>=0.32.0",
+    "python-multipart>=0.0.9",
     "PySocks>=1.7.1",
 ]
