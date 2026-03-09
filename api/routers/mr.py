@@ -4,11 +4,16 @@
 端点列表：
   GET  /api/mr              - 主页列表（MR号、流水号、目标地址、需求日期）
   GET  /api/mr/{id}         - 出库单详情（弹窗用）
-  POST /api/mr/sync         - 手动触发 Maximo 同步
+  POST /api/mr/sync         - 手动触发 Maximo 出库单同步
   PUT  /api/mr/{id}/lines/{line_id}/bin   - 修改子表行仓位
   GET  /api/mr/{id}/bins/{item_number}    - 获取货柜列表（仓位选择页）
   POST /api/mr/{id}/issue   - 执行出库（先进先出校验 + 回传 Maximo）
   POST /api/mr/{id}/writeback - 手动触发回传 Maximo 并拉取新流水号
+
+  ── 库存货柜同步 ──
+  POST /api/mr/inventory/sync   - 从 Maximo 同步库存货柜数据（初始化/增量）
+  GET  /api/mr/inventory/bins   - 查询货柜库存列表
+  GET  /api/mr/inventory/export - 导出货柜库存为 Excel
 """
 import sys
 from pathlib import Path
@@ -19,6 +24,7 @@ from pydantic import BaseModel, Field
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from fastapi.responses import FileResponse
 from src.utils.db import get_connection, generate_id
 from src.sync.mr_sync import (
     sync_mr_from_maximo,
@@ -27,6 +33,11 @@ from src.sync.mr_sync import (
     update_issued_qty,
 )
 from src.fetcher.mr_fetcher import writeback_to_maximo, fetch_mr_by_number
+from src.sync.inventory_sync import (
+    sync_bin_inventory,
+    export_bin_inventory_excel,
+    get_bins_for_item_warehouse,
+)
 
 router = APIRouter(prefix="/api/mr", tags=["出库单 MR"])
 
@@ -56,6 +67,15 @@ class IssueRequest(BaseModel):
 
 class WritebackRequest(BaseModel):
     new_serial: Optional[str] = Field(None, description="Maximo 新建的流水号（手动填入后写入WMS）")
+
+
+class InventorySyncRequest(BaseModel):
+    warehouse: Optional[str] = Field(None, description="仓库过滤（如 '518'）；None=全部仓库")
+    item_numbers: Optional[List[str]] = Field(None, description="指定物料编号列表；None=全部")
+    max_pages: int = Field(20, ge=1, le=200, description="最多抓取页数")
+    page_size: int = Field(50, ge=1, le=200, description="每页条数")
+    use_invbal_api: bool = Field(False, description="True=使用 MXAPIINVBAL 备用接口")
+    full_refresh: bool = Field(False, description="True=全量刷新（先清空再写入）")
 
 
 # ── 工具函数 ────────────────────────────────────────────────────────────────────
@@ -375,3 +395,100 @@ def writeback_and_update_serial(header_id: int, req: WritebackRequest):
     finally:
         cursor.close()
         conn.close()
+
+
+# ── 库存货柜同步 API ────────────────────────────────────────────────────────────
+
+@router.post("/inventory/sync", summary="同步库存货柜数据（初始化/增量）")
+def sync_inventory(req: InventorySyncRequest):
+    """
+    从 Maximo MXAPIINVENTORY（含 invbalance 货柜明细）同步库存到 bin_inventory 表。
+
+    用途：
+    - 初次使用：full_refresh=True 全量写入
+    - 日常增量：full_refresh=False 仅更新变化数据
+    - 按仓库：warehouse='518' 只同步指定仓库
+    - 备用接口：use_invbal_api=True（当主接口 invbalance 子集不可用时）
+
+    化学品批次信息字段待客户确认后补充到 oslc.select 中。
+    """
+    try:
+        stats = sync_bin_inventory(
+            warehouse=req.warehouse,
+            item_numbers=req.item_numbers,
+            max_pages=req.max_pages,
+            page_size=req.page_size,
+            use_invbal_api=req.use_invbal_api,
+            full_refresh=req.full_refresh,
+        )
+        return {"success": True, "stats": stats}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/inventory/bins", summary="查询货柜库存列表")
+def list_bins(
+    warehouse: Optional[str] = Query(None, description="仓库过滤"),
+    item_number: Optional[str] = Query(None, description="物料编号过滤"),
+    bin_code: Optional[str] = Query(None, description="货柜编号过滤"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+):
+    """
+    查询 bin_inventory 表中的货柜库存，按先进先出顺序（receipt_date ASC）排序
+    """
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        where = ["del_flag=0", "quantity > 0"]
+        params = []
+        if warehouse:
+            where.append("warehouse=%s"); params.append(warehouse)
+        if item_number:
+            where.append("item_number LIKE %s"); params.append(f"%{item_number}%")
+        if bin_code:
+            where.append("bin_code LIKE %s"); params.append(f"%{bin_code}%")
+
+        where_sql = " AND ".join(where)
+        cursor.execute(f"SELECT COUNT(*) AS cnt FROM bin_inventory WHERE {where_sql}", params)
+        total = cursor.fetchone()["cnt"]
+
+        offset = (page - 1) * page_size
+        cursor.execute(
+            f"""SELECT id, item_number, warehouse, bin_code, bin_name,
+                       lot_number, batch_number, quantity, receipt_date, update_time
+                FROM bin_inventory WHERE {where_sql}
+                ORDER BY item_number, receipt_date ASC, bin_code
+                LIMIT %s OFFSET %s""",
+            [*params, page_size, offset],
+        )
+        rows = [_serialize_row(r) for r in cursor.fetchall()]
+        return {"total": total, "page": page, "page_size": page_size, "items": rows}
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@router.get("/inventory/export", summary="导出货柜库存为 Excel")
+def export_inventory(
+    warehouse: Optional[str] = Query(None, description="仓库过滤"),
+    item_number: Optional[str] = Query(None, description="物料编号过滤"),
+):
+    """
+    将 bin_inventory 表按先进先出顺序导出为 Excel 文件
+    包含字段：物料编号、仓库、货柜、批次号、数量、入库日期
+    （化学品批次信息待客户补充字段后扩展）
+    """
+    try:
+        path = export_bin_inventory_excel(warehouse=warehouse, item_number=item_number)
+        if not path:
+            raise HTTPException(status_code=404, detail="无库存数据可导出")
+        return FileResponse(
+            path,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=f"bin_inventory_{warehouse or 'all'}.xlsx",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
