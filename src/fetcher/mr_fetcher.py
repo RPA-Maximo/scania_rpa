@@ -32,7 +32,9 @@ MR_HEADER_SELECT = (
     "invuselinenum,invuselinetype,itemnum,description,"
     "curbal,availbal,quantity,transdate,"
     "binnum,lotnum,wonum,conditioncode,"
-    "glcreditacct,chargeto,costcenter"
+    "glcreditacct,chargeto,costcenter,"
+    # 预留相关字段（来自 添加/修改预留项目 截图）
+    "reservenum,reservetype,requestnum,requestline,requireddate,requestby"
     "}"
 )
 

@@ -98,11 +98,24 @@ def init_mr_tables(conn):
         _add_col(cursor, 'mr_detail', 'delivered_qty',
                  "DECIMAL(15,2) NULL COMMENT '交货数量'")
         _add_col(cursor, 'mr_detail', 'gl_credit_account',
-                 "VARCHAR(200) NULL COMMENT 'GL贷方科目'")
+                 "VARCHAR(200) NULL COMMENT 'GL贷方科目(如K-546110-36192)'")
         _add_col(cursor, 'mr_detail', 'charge_to',
-                 "VARCHAR(200) NULL COMMENT '发放目标'")
+                 "VARCHAR(200) NULL COMMENT '发放目标(如WYAVW6)'")
         _add_col(cursor, 'mr_detail', 'cost_center',
                  "VARCHAR(100) NULL COMMENT '成本中心'")
+        # 预留相关字段（来自 添加/修改预留项目 截图）
+        _add_col(cursor, 'mr_detail', 'reserve_num',
+                 "VARCHAR(50) NULL COMMENT '预留号(如24948819)'")
+        _add_col(cursor, 'mr_detail', 'reserve_type',
+                 "VARCHAR(20) NULL COMMENT '预留类型(APHARD/SOFT等)'")
+        _add_col(cursor, 'mr_detail', 'line_request_num',
+                 "VARCHAR(50) NULL COMMENT '行级申请号(invusage行的requestnum)'")
+        _add_col(cursor, 'mr_detail', 'request_line',
+                 "INT NULL COMMENT '申请行号(requestline,如5)'")
+        _add_col(cursor, 'mr_detail', 'required_date',
+                 "DATE NULL COMMENT '行级需求日期(来自预留项目要求的日期)'")
+        _add_col(cursor, 'mr_detail', 'requester',
+                 "VARCHAR(100) NULL COMMENT '请求者(requestby,如SANTBM)'")
 
         # ── 货柜库存表（先进先出基础数据）─────────────────────────────────
         cursor.execute("""

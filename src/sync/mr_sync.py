@@ -74,6 +74,12 @@ def _parse_lines(raw_lines: List[Dict], header_id: int) -> List[Dict]:
       glcreditacct   → GL贷方科目（如 K-546110-36192）
       chargeto       → 发放目标（如 WYAVW6）
       costcenter     → 成本中心（如 36192）
+      reservenum     → 预留号（如 24948819，来自 添加/修改预留项目）
+      reservetype    → 预留类型（APHARD/SOFT 等）
+      requestnum     → 行级申请号（如 10234）
+      requestline    → 申请行（如 5）
+      requireddate   → 行级需求日期（预留中的 要求的日期）
+      requestby      → 请求者（如 SANTBM）
     """
     result = []
     for line in raw_lines:
@@ -95,9 +101,16 @@ def _parse_lines(raw_lines: List[Dict], header_id: int) -> List[Dict]:
             "unit":              "PCS",
             "bin_location":      line.get("binnum") or "",
             "wo_number":         line.get("wonum") or "",
-            "gl_credit_account": line.get("glcreditacct") or "",  # GL贷方科目
-            "charge_to":         line.get("chargeto") or "",       # 发放目标
-            "cost_center":       line.get("costcenter") or "",     # 成本中心
+            "gl_credit_account": line.get("glcreditacct") or "",
+            "charge_to":         line.get("chargeto") or "",
+            "cost_center":       line.get("costcenter") or "",
+            # 预留相关
+            "reserve_num":       line.get("reservenum") or "",
+            "reserve_type":      line.get("reservetype") or "",
+            "line_request_num":  line.get("requestnum") or "",
+            "request_line":      line.get("requestline"),
+            "required_date":     _safe_date(line.get("requireddate")),  # 行级需求日期
+            "requester":         line.get("requestby") or "",
             "maximo_lineid":     line.get("invuselinenum"),
         })
     return result
@@ -223,9 +236,12 @@ def sync_mr_from_maximo(
                              description, current_balance, available_qty, required_qty,
                              transport_date, unit, bin_location, wo_number,
                              gl_credit_account, charge_to, cost_center,
+                             reserve_num, reserve_type, line_request_num,
+                             request_line, required_date, requester,
                              maximo_lineid, create_time)
                            VALUES
-                            (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())""",
+                            (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                             %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())""",
                         (
                             line_id,
                             line["header_id"],
@@ -243,6 +259,12 @@ def sync_mr_from_maximo(
                             line["gl_credit_account"],
                             line["charge_to"],
                             line["cost_center"],
+                            line["reserve_num"],
+                            line["reserve_type"],
+                            line["line_request_num"],
+                            line["request_line"],
+                            line["required_date"],
+                            line["requester"],
                             line["maximo_lineid"],
                         ),
                     )

@@ -308,10 +308,13 @@
                 <th>当前余量</th>
                 <th>可用量</th>
                 <th>需求数量</th>
+                <th>需求日期</th>
                 <th>运输日期</th>
                 <th>单位</th>
                 <th>仓位</th>
                 <th>WO号</th>
+                <th>预留号</th>
+                <th>预留类型</th>
                 <th>GL贷方科目</th>
                 <th>发放目标</th>
                 <th>出库数量</th>
@@ -508,10 +511,11 @@ function renderLines(lines) {
       <tr>
         <td>${l.line_number ?? '—'}</td>
         <td>${l.item_number || '—'}</td>
-        <td style="max-width:150px;word-break:break-all">${l.description || '—'}</td>
+        <td style="max-width:140px;word-break:break-all">${l.description || '—'}</td>
         <td>${l.current_balance ?? '—'}</td>
         <td>${l.available_qty ?? '—'}</td>
         <td class="${notMet ? 'qty-not-met' : ''}">${l.required_qty ?? '—'}</td>
+        <td>${l.required_date || '—'}</td>
         <td>${l.transport_date || '—'}</td>
         <td>PCS</td>
         <td>
@@ -519,6 +523,8 @@ function renderLines(lines) {
           <button class="btn btn-outline btn-sm" style="margin-left:6px" onclick="openBinSelect(${l.id},'${l.item_number}')">选择</button>
         </td>
         <td>${l.wo_number || '—'}</td>
+        <td style="font-size:11px">${l.reserve_num || '—'}</td>
+        <td>${l.reserve_type || '—'}</td>
         <td style="font-size:11px">${l.gl_credit_account || '—'}</td>
         <td>${l.charge_to || '—'}</td>
         <td>
