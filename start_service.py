@@ -87,19 +87,19 @@ def check_maximo_logged_in():
     try:
         response = requests.get(f"http://localhost:{DEBUG_PORT}/json", timeout=2)
         pages = response.json()
-        
+
+        login_url = None
         for page in pages:
-            url = page.get('url', '').lower()
-            if 'maximo' in url and 'login' not in url:
-                return True, page.get('url')
-        
-        # 检查是否在登录页
-        for page in pages:
-            url = page.get('url', '').lower()
-            if 'login' in url or 'auth.scania' in url:
-                return False, url
-        
-        return False, None
+            url = page.get('url', '')
+            url_lower = url.lower()
+            # 已登录：suite.maximo.com 系统界面，但不是 auth. 登录域
+            if 'suite.maximo.com' in url_lower and 'auth.' not in url_lower:
+                return True, url
+            # 记录登录页
+            if 'auth.' in url_lower or 'login' in url_lower:
+                login_url = url
+
+        return False, login_url
     except:
         return False, None
 
