@@ -29,21 +29,52 @@ def _collect_wo_numbers(lines: List[Dict]) -> str:
 
 
 def _parse_header(raw: Dict) -> Dict:
-    """解析 Maximo 出库单主表数据"""
+    """
+    解析 Maximo 出库单主表数据
+
+    Maximo 字段对应关系（来自分拣清单截图）：
+      usagenum     → 使用数量/出库单号
+      description  → 描述（领取人信息，如 "领取人：郜洁 15859365005"）
+      requestnum   → 申请号（分拣清单中的"申请"列，如 10234）
+      storeloc     → 原仓库（如 518）
+      siteid       → 地点（如 RUGAO）
+      requireddate → 需求日期
+      costcenter   → 成本中心（如 36192）
+      chargeto     → 发放目标（如 WYAVW6）
+    """
     return {
-        "issue_number": raw.get("usagenum") or raw.get("invusageid") or "",
-        "mr_number":    raw.get("description") or "",  # Maximo 申请/描述字段对应 MR号
-        "usage_type":   raw.get("invuselinetype") or "ISSUE",
-        "warehouse":    raw.get("storeloc") or "",
-        "target_address": raw.get("siteid") or "",
-        "required_date": _safe_date(raw.get("requireddate")),
-        "status":       raw.get("status") or "",
-        "maximo_href":  raw.get("href") or "",
+        "issue_number":   raw.get("usagenum") or str(raw.get("invusageid") or ""),
+        "request_number": raw.get("requestnum") or "",    # 申请号
+        "applicant":      raw.get("description") or "",   # 描述/领取人
+        "usage_type":     raw.get("invuselinetype") or "ISSUE",
+        "warehouse":      raw.get("storeloc") or "",
+        "site":           raw.get("siteid") or "",
+        "target_address": raw.get("siteid") or "",        # 目标地址暂用地点，后续客户补充
+        "required_date":  _safe_date(raw.get("requireddate")),
+        "status":         raw.get("status") or "",
+        "cost_center":    raw.get("costcenter") or "",    # 成本中心
+        "charge_to":      raw.get("chargeto") or "",      # 发放目标
+        "maximo_href":    raw.get("href") or "",
     }
 
 
 def _parse_lines(raw_lines: List[Dict], header_id: int) -> List[Dict]:
-    """解析 Maximo 出库单子表数据"""
+    """
+    解析 Maximo 出库单子表数据
+
+    Maximo 字段对应关系（来自截图）：
+      itemnum        → 项目（物料编号）
+      description    → 物料名称
+      curbal         → 当前余量
+      availbal       → 可用量
+      quantity       → 申请数量（需求数量）
+      transdate      → 运输日期
+      binnum         → 原货柜（仓位）
+      wonum          → 工单号（WO）
+      glcreditacct   → GL贷方科目（如 K-546110-36192）
+      chargeto       → 发放目标（如 WYAVW6）
+      costcenter     → 成本中心（如 36192）
+    """
     result = []
     for line in raw_lines:
         # 跳过非物料行（SERVICE 等）
@@ -51,22 +82,23 @@ def _parse_lines(raw_lines: List[Dict], header_id: int) -> List[Dict]:
         if line_type in ("SERVICE", "STDSERVICE"):
             continue
 
-        transport_date = _safe_date(line.get("transdate"))
-
         result.append({
-            "header_id":       header_id,
-            "line_number":     line.get("invuselinenum"),
-            "usage_type":      line.get("invuselinetype") or "ISSUE",
-            "item_number":     line.get("itemnum") or "",
-            "description":     line.get("description") or "",
-            "current_balance": _safe_decimal(line.get("curbal")),
-            "available_qty":   _safe_decimal(line.get("availbal")),
-            "required_qty":    _safe_decimal(line.get("quantity")),
-            "transport_date":  transport_date,
-            "unit":            "PCS",
-            "bin_location":    line.get("binnum") or "",
-            "wo_number":       line.get("wonum") or "",
-            "maximo_lineid":   line.get("invuselinenum"),
+            "header_id":         header_id,
+            "line_number":       line.get("invuselinenum"),
+            "usage_type":        line.get("invuselinetype") or "ISSUE",
+            "item_number":       line.get("itemnum") or "",
+            "description":       line.get("description") or "",
+            "current_balance":   _safe_decimal(line.get("curbal")),
+            "available_qty":     _safe_decimal(line.get("availbal")),
+            "required_qty":      _safe_decimal(line.get("quantity")),
+            "transport_date":    _safe_date(line.get("transdate")),
+            "unit":              "PCS",
+            "bin_location":      line.get("binnum") or "",
+            "wo_number":         line.get("wonum") or "",
+            "gl_credit_account": line.get("glcreditacct") or "",  # GL贷方科目
+            "charge_to":         line.get("chargeto") or "",       # 发放目标
+            "cost_center":       line.get("costcenter") or "",     # 成本中心
+            "maximo_lineid":     line.get("invuselinenum"),
         })
     return result
 
@@ -134,13 +166,18 @@ def sync_mr_from_maximo(
                 cursor.execute(
                     """UPDATE mr_header SET
                         status=%s, wo_numbers=%s, required_date=%s,
-                        target_address=%s, update_time=NOW()
+                        target_address=%s, applicant=%s, request_number=%s,
+                        cost_center=%s, charge_to=%s, update_time=NOW()
                        WHERE id=%s""",
                     (
                         header["status"],
                         wo_numbers,
                         header["required_date"],
                         header["target_address"],
+                        header["applicant"],
+                        header["request_number"],
+                        header["cost_center"],
+                        header["charge_to"],
                         existing["id"],
                     ),
                 )
@@ -153,19 +190,24 @@ def sync_mr_from_maximo(
 
                 cursor.execute(
                     """INSERT INTO mr_header
-                        (id, issue_number, mr_number, usage_type, warehouse,
-                         target_address, required_date, status, wo_numbers,
-                         maximo_href, create_time)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())""",
+                        (id, issue_number, request_number, applicant,
+                         usage_type, warehouse, site, target_address,
+                         required_date, status, cost_center, charge_to,
+                         wo_numbers, maximo_href, create_time)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())""",
                     (
                         header_id,
                         issue_number,
-                        header["mr_number"],
+                        header["request_number"],
+                        header["applicant"],
                         header["usage_type"],
                         header["warehouse"],
+                        header["site"],
                         header["target_address"],
                         header["required_date"],
                         header["status"],
+                        header["cost_center"],
+                        header["charge_to"],
                         wo_numbers,
                         header["maximo_href"],
                     ),
@@ -180,9 +222,10 @@ def sync_mr_from_maximo(
                             (id, header_id, line_number, usage_type, item_number,
                              description, current_balance, available_qty, required_qty,
                              transport_date, unit, bin_location, wo_number,
+                             gl_credit_account, charge_to, cost_center,
                              maximo_lineid, create_time)
                            VALUES
-                            (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())""",
+                            (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())""",
                         (
                             line_id,
                             line["header_id"],
@@ -197,6 +240,9 @@ def sync_mr_from_maximo(
                             line["unit"],
                             line["bin_location"],
                             line["wo_number"],
+                            line["gl_credit_account"],
+                            line["charge_to"],
+                            line["cost_center"],
                             line["maximo_lineid"],
                         ),
                     )

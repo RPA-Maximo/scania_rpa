@@ -22,12 +22,18 @@ MR_API_URL = f"{MAXIMO_BASE_URL}/oslc/os/MXAPIINVUSAGE"
 REQUEST_TIMEOUT = 120
 
 # 从 Maximo 中选取的字段
+# 主表：使用情况号、描述(领取人)、类型、仓库、地点、状态、需求日期、申请号、成本中心、发放目标
+# 子表：行号、类型、项目、描述、当前余量、可用量、数量、运输日期、货柜、批号、工单、GL贷方科目、发放目标
 MR_HEADER_SELECT = (
-    "invusageid,usagenum,description,invuselinetype,status,stagingbin,"
+    "invusageid,usagenum,description,invuselinetype,status,"
     "storeloc,siteid,requireddate,"
-    "invuseline{invuselinenum,invuselinetype,itemnum,description,"
-    "curbal,availbal,quantity,transdate,binnum,lotnum,wonum,conditioncode,"
-    "invusageid}"
+    "requestnum,costcenter,chargeto,"
+    "invuseline{"
+    "invuselinenum,invuselinetype,itemnum,description,"
+    "curbal,availbal,quantity,transdate,"
+    "binnum,lotnum,wonum,conditioncode,"
+    "glcreditacct,chargeto,costcenter"
+    "}"
 )
 
 

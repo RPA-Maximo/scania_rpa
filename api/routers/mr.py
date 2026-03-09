@@ -130,10 +130,11 @@ def list_mr(
         cursor.execute(f"SELECT COUNT(*) AS cnt FROM mr_header WHERE {where_sql}", params)
         total = cursor.fetchone()["cnt"]
 
-        # 数据
+        # 数据（列表页展示：出库单号、申请号、描述/领取人、发放目标、仓库、需求日期、WO号、状态）
         cursor.execute(
-            f"""SELECT id, issue_number AS serial_number, mr_number,
-                       target_address, required_date, status, wo_numbers, warehouse
+            f"""SELECT id, issue_number AS serial_number,
+                       request_number, applicant, charge_to,
+                       warehouse, required_date, status, wo_numbers
                 FROM mr_header WHERE {where_sql}
                 ORDER BY required_date DESC, id DESC
                 LIMIT %s OFFSET %s""",

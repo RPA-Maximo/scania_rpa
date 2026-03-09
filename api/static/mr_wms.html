@@ -260,10 +260,11 @@
   <table>
     <thead>
       <tr>
-        <th>MR号</th>
-        <th>流水号（出库单号）</th>
+        <th>出库单号</th>
+        <th>申请号</th>
+        <th>描述/领取人</th>
+        <th>发放目标</th>
         <th>仓库</th>
-        <th>目标地址</th>
         <th>需求日期</th>
         <th>WO号</th>
         <th>状态</th>
@@ -303,7 +304,7 @@
               <tr>
                 <th>行号</th>
                 <th>项目</th>
-                <th>描述</th>
+                <th>物料名称</th>
                 <th>当前余量</th>
                 <th>可用量</th>
                 <th>需求数量</th>
@@ -311,7 +312,9 @@
                 <th>单位</th>
                 <th>仓位</th>
                 <th>WO号</th>
-                <th>操作</th>
+                <th>GL贷方科目</th>
+                <th>发放目标</th>
+                <th>出库数量</th>
               </tr>
             </thead>
             <tbody id="detail-lines"></tbody>
@@ -433,10 +436,11 @@ async function fetchList() {
 
     tbody.innerHTML = data.items.map(row => `
       <tr>
-        <td>${row.mr_number || '—'}</td>
         <td><strong>${row.serial_number || '—'}</strong></td>
+        <td>${row.request_number || '—'}</td>
+        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${row.applicant || ''}">${row.applicant || '—'}</td>
+        <td>${row.charge_to || '—'}</td>
         <td>${row.warehouse || '—'}</td>
-        <td>${row.target_address || '—'}</td>
         <td>${row.required_date || '—'}</td>
         <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${row.wo_numbers || ''}">${row.wo_numbers || '—'}</td>
         <td><span class="badge badge-${(row.status||'').toLowerCase()}">${row.status || '—'}</span></td>
@@ -470,14 +474,17 @@ async function openDetail(headerId) {
     const h = data.header;
     document.getElementById('detail-title').textContent = `出库单详情 — ${h.issue_number || ''}`;
     document.getElementById('detail-header').innerHTML = `
-      <div class="info-item"><div class="info-label">出库单号</div><div class="info-value">${h.issue_number || '—'}</div></div>
-      <div class="info-item"><div class="info-label">MR号</div><div class="info-value">${h.mr_number || '—'}</div></div>
+      <div class="info-item"><div class="info-label">出库单号（使用情况）</div><div class="info-value"><strong>${h.issue_number || '—'}</strong></div></div>
+      <div class="info-item"><div class="info-label">申请号</div><div class="info-value">${h.request_number || '—'}</div></div>
+      <div class="info-item"><div class="info-label">描述/领取人</div><div class="info-value">${h.applicant || '—'}</div></div>
       <div class="info-item"><div class="info-label">使用情况类型</div><div class="info-value">${h.usage_type || '—'}</div></div>
       <div class="info-item"><div class="info-label">仓库（不可修改）</div><div class="info-value">${h.warehouse || '—'}</div></div>
-      <div class="info-item"><div class="info-label">目标地址</div><div class="info-value">${h.target_address || '—'}</div></div>
+      <div class="info-item"><div class="info-label">地点</div><div class="info-value">${h.site || '—'}</div></div>
+      <div class="info-item"><div class="info-label">成本中心</div><div class="info-value">${h.cost_center || '—'}</div></div>
+      <div class="info-item"><div class="info-label">发放目标</div><div class="info-value">${h.charge_to || '—'}</div></div>
       <div class="info-item"><div class="info-label">需求日期</div><div class="info-value">${h.required_date || '—'}</div></div>
-      <div class="info-item"><div class="info-label">状态</div><div class="info-value">${h.status || '—'}</div></div>
-      <div class="info-item"><div class="info-label">WO号</div><div class="info-value" style="word-break:break-all">${h.wo_numbers || '—'}</div></div>
+      <div class="info-item"><div class="info-label">状态</div><div class="info-value"><span class="badge badge-${(h.status||'').toLowerCase()}">${h.status || '—'}</span></div></div>
+      <div class="info-item" style="grid-column:span 2"><div class="info-label">WO号（去重）</div><div class="info-value" style="word-break:break-all">${h.wo_numbers || '—'}</div></div>
     `;
 
     // 子表
@@ -501,7 +508,7 @@ function renderLines(lines) {
       <tr>
         <td>${l.line_number ?? '—'}</td>
         <td>${l.item_number || '—'}</td>
-        <td style="max-width:160px">${l.description || '—'}</td>
+        <td style="max-width:150px;word-break:break-all">${l.description || '—'}</td>
         <td>${l.current_balance ?? '—'}</td>
         <td>${l.available_qty ?? '—'}</td>
         <td class="${notMet ? 'qty-not-met' : ''}">${l.required_qty ?? '—'}</td>
@@ -512,6 +519,8 @@ function renderLines(lines) {
           <button class="btn btn-outline btn-sm" style="margin-left:6px" onclick="openBinSelect(${l.id},'${l.item_number}')">选择</button>
         </td>
         <td>${l.wo_number || '—'}</td>
+        <td style="font-size:11px">${l.gl_credit_account || '—'}</td>
+        <td>${l.charge_to || '—'}</td>
         <td>
           <input type="number" id="issued-${l.id}" value="${l.issued_qty ?? l.required_qty ?? ''}"
             style="width:70px;border:1px solid #ddd;border-radius:4px;padding:4px 6px;font-size:12px"
