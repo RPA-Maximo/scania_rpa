@@ -225,6 +225,9 @@ def start_browser():
         f"--remote-debugging-port={DEBUG_PORT}",
         f"--user-data-dir={USER_DATA_DIR}",
         "--profile-directory=Default",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-background-timer-throttling",
         MAXIMO_LOGIN_URL
     ]
     
@@ -237,7 +240,7 @@ def start_browser():
         
         # 等待浏览器启动
         print("等待浏览器启动...", end="", flush=True)
-        for i in range(15):  # 增加到 15 秒
+        for i in range(20):  # 等待最多 20 秒
             time.sleep(1)
             if check_browser_running():
                 print(" ✓")
