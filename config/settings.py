@@ -64,7 +64,7 @@ VERIFY_SSL = False
 MAX_RETRIES = 3
 
 # 代理配置
-PROXY_ENABLED = True
+PROXY_ENABLED = False
 PROXY_HOST = "127.0.0.1"
 PROXY_PORT = 10820
 PROXY_PROTOCOL = "socks5"  # socks5 | http | https
