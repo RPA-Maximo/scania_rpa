@@ -12,6 +12,7 @@ LLM 提示：这个文件保留用于向后兼容
 # 向后兼容：从新模块导入所有函数
 from .browser import connect_to_browser
 from .navigation import (
+    navigate_to_receipts_page,
     click_menu_purchase,
     click_menu_receipts,
     search_all_po,
@@ -33,6 +34,7 @@ from .workflows import process_multiple_po_lines
 
 __all__ = [
     'connect_to_browser',
+    'navigate_to_receipts_page',
     'click_menu_purchase',
     'click_menu_receipts',
     'search_all_po',

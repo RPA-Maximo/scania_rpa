@@ -39,7 +39,10 @@ def get_browser_path():
 BROWSER_PATH, BROWSER_NAME = get_browser_path()
 
 # 用户数据目录
-USER_DATA_DIR = os.path.expanduser(r"~\AppData\Local\Microsoft\Edge\User Data")
+# 使用独立的 RPA 专用目录，避免与正常 Edge 实例冲突
+# 若需要沿用已有登录 Cookie，可改为：
+#   USER_DATA_DIR = os.path.expanduser(r"~\AppData\Local\Microsoft\Edge\User Data")
+USER_DATA_DIR = os.path.expanduser(r"~\AppData\Local\Microsoft\Edge\RPA_Profile")
 
 # 调试端口
 DEBUG_PORT = 9223

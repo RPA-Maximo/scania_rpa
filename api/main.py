@@ -17,7 +17,20 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from rpa.keepalive import KeepaliveManager
+from api.routers.auth import router as auth_router
+from api.routers.scraper import router as scraper_router
+from api.routers.settings import router as settings_router
+from api.routers.sync import router as sync_router
+from api.routers.mr import router as mr_router
+from api.routers.items import router as items_router
+from api.routers.material_location import router as material_location_router
+from api.routers.vendor import router as vendor_router
+from api.routers.warehouse import router as warehouse_router
+from src.sync.po_sync_service import po_sync_scheduler
+from src.sync.item_sync import item_sync_scheduler
 
 # 保活管理器（全局单例）
 keepalive_manager = KeepaliveManager()
@@ -25,9 +38,13 @@ keepalive_manager = KeepaliveManager()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期管理：启动/停止保活定时器"""
+    """应用生命周期管理：启动/停止保活定时器和 PO 增量同步调度器"""
     keepalive_manager.start()
+    po_sync_scheduler.start()     # 启动 5 分钟 PO 增量同步
+    item_sync_scheduler.start()   # 启动每日凌晨物料全量同步
     yield
+    item_sync_scheduler.stop()
+    po_sync_scheduler.stop()
     keepalive_manager.stop()
 
 
@@ -47,6 +64,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# 注册路由
+app.include_router(auth_router)
+app.include_router(scraper_router)
+app.include_router(settings_router)
+app.include_router(sync_router)
+app.include_router(mr_router)
+app.include_router(items_router)
+app.include_router(material_location_router)
+app.include_router(vendor_router)
+app.include_router(warehouse_router)
+
+# 静态文件（前端页面）
+_static_dir = PROJECT_ROOT / "api" / "static"
+if _static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+
+
+@app.get("/mr", include_in_schema=False)
+async def mr_wms_page():
+    """出库单 WMS 前端页面"""
+    return FileResponse(str(_static_dir / "mr_wms.html"))
 
 import logging
 

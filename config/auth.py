@@ -89,34 +89,13 @@ def parse_curl_file(curl_file_path: str = None):
 def get_maximo_auth():
     """
     获取 Maximo API 认证信息
-    优先从 响应标头.txt 解析，失败则从 .env 读取
-    
+    通过 auth_manager 单例获取，支持 API 动态更新
+
     Returns:
         dict: 包含 cookie, csrf_token, refresh_token 的字典
     """
-    # 优先尝试从 响应标头.txt 解析
-    auth_info = parse_curl_file()
-    
-    if auth_info:
-        return auth_info
-    
-    # 回退到 .env 文件
-    load_env_file()
-    
-    cookie = os.getenv('MAXIMO_COOKIE', '')
-    csrf_token = os.getenv('MAXIMO_CSRF_TOKEN', '')
-    refresh_token = os.getenv('MAXIMO_REFRESH_TOKEN', '')
-    
-    if not cookie or not csrf_token:
-        raise ValueError(
-            "缺少认证信息！请在 config/响应标头.txt 或 config/.env 文件中设置认证信息"
-        )
-    
-    return {
-        'cookie': cookie,
-        'csrf_token': csrf_token,
-        'refresh_token': refresh_token
-    }
+    from config.auth_manager import auth_manager
+    return auth_manager.get_auth()
 
 
 def get_db_config():

@@ -16,12 +16,10 @@ import urllib3
 from config import (
     get_maximo_auth,
     DEFAULT_HEADERS,
-    REQUEST_DELAY,
-    VERIFY_SSL,
     RAW_DATA_DIR,
-    PROXIES
 )
-from config.settings import MAXIMO_BASE_URL
+from config.settings import MAXIMO_BASE_URL, REQUEST_DELAY, VERIFY_SSL
+from config.settings_manager import settings_manager
 
 # 禁用安全警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -90,7 +88,22 @@ def fetch_po_by_number(po_number: str, save_to_file: bool = True) -> Optional[di
     }
     
     params = {
-        'oslc.select': '*',
+        'oslc.select': (
+            '*,'
+            'requireddate,'
+            'vendor,vendorname,'
+            'venaddress1,venaddr1,'
+            'venzip,venpostalcode,'
+            'vencity,'
+            'vencontact,'
+            'venphone,'
+            'venemail,cxpoemail,'
+            'billtocomp,billtoname,'
+            'billtoaddress1,billtoaddr1,'
+            'billtoaddress2,billtoaddr2,'
+            'billtocity,'
+            'billtozip,billtopostalcode'
+        ),
         'oslc.where': f'ponum="{po_number}"',
         '_dropnulls': 0,
     }
@@ -102,7 +115,7 @@ def fetch_po_by_number(po_number: str, save_to_file: bool = True) -> Optional[di
             headers=headers,
             params=params,
             verify=VERIFY_SSL,
-            proxies=PROXIES,
+            proxies=settings_manager.get_proxies(),
             timeout=REQUEST_TIMEOUT
         )
         
@@ -204,7 +217,22 @@ def fetch_po_list(
             print(f"  第 {page}/{max_pages} 页...", end=" ", flush=True)
             
             params = {
-                'oslc.select': '*',
+                'oslc.select': (
+                    '*,'
+                    'requireddate,'
+                    'vendor,vendorname,'
+                    'venaddress1,venaddr1,'
+                    'venzip,venpostalcode,'
+                    'vencity,'
+                    'vencontact,'
+                    'venphone,'
+                    'venemail,cxpoemail,'
+                    'billtocomp,billtoname,'
+                    'billtoaddress1,billtoaddr1,'
+                    'billtoaddress2,billtoaddr2,'
+                    'billtocity,'
+                    'billtozip,billtopostalcode'
+                ),
                 'oslc.pageSize': page_size,
                 '_dropnulls': 0,
                 'pageno': page,
@@ -220,12 +248,19 @@ def fetch_po_list(
                     headers=headers,
                     params=params,
                     verify=VERIFY_SSL,
-                    proxies=PROXIES,
+                    proxies=settings_manager.get_proxies(),
                     timeout=REQUEST_TIMEOUT
                 )
                 
                 if resp.status_code == 200:
-                    data = resp.json()
+                    if not resp.content:
+                        print("认证过期（空响应）")
+                        break
+                    try:
+                        data = resp.json()
+                    except Exception:
+                        print(f"非JSON响应（认证可能已过期），内容: {resp.text[:100]!r}")
+                        break
                     items = data.get('member') or data.get('rdfs:member')
                     
                     if items:

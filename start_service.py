@@ -87,19 +87,19 @@ def check_maximo_logged_in():
     try:
         response = requests.get(f"http://localhost:{DEBUG_PORT}/json", timeout=2)
         pages = response.json()
-        
+
+        login_url = None
         for page in pages:
-            url = page.get('url', '').lower()
-            if 'maximo' in url and 'login' not in url:
-                return True, page.get('url')
-        
-        # 检查是否在登录页
-        for page in pages:
-            url = page.get('url', '').lower()
-            if 'login' in url or 'auth.scania' in url:
-                return False, url
-        
-        return False, None
+            url = page.get('url', '')
+            url_lower = url.lower()
+            # 已登录：suite.maximo.com 系统界面，但不是 auth. 登录域
+            if 'suite.maximo.com' in url_lower and 'auth.' not in url_lower:
+                return True, url
+            # 记录登录页
+            if 'auth.' in url_lower or 'login' in url_lower:
+                login_url = url
+
+        return False, login_url
     except:
         return False, None
 
@@ -225,6 +225,9 @@ def start_browser():
         f"--remote-debugging-port={DEBUG_PORT}",
         f"--user-data-dir={USER_DATA_DIR}",
         "--profile-directory=Default",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-background-timer-throttling",
         MAXIMO_LOGIN_URL
     ]
     
@@ -237,7 +240,7 @@ def start_browser():
         
         # 等待浏览器启动
         print("等待浏览器启动...", end="", flush=True)
-        for i in range(15):  # 增加到 15 秒
+        for i in range(20):  # 等待最多 20 秒
             time.sleep(1)
             if check_browser_running():
                 print(" ✓")
