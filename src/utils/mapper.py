@@ -63,10 +63,11 @@ PO_LINE_MAPPING = {
     'linecost': 'line_cost',
     'catalogcode': 'model_num',         # 型号
     'newitemdesc': 'size_info',         # 尺寸/规格
+    'itemnum': 'item_code',             # 物料编号（原始字符串，始终保留）
     'location': 'target_container',     # 目标货柜
     # 'currency' 优先取行级字段，fallback 到 PO 头 currencycode（在 map_line_data 中处理）
-    # 'itemnum' 需要通过查询 material 表获取 id，映射到 'sku'
-    # 'storeloc' 通过查询 warehouse 表获取 id，映射到 'warehouse'
+    # 'sku' 由 itemnum 查询 material 表获取 material_id，可能为 NULL
+    # 'warehouse' 由 storeloc 查询 warehouse 表获取 warehouse_id，可能为 NULL
 }
 
 # poline -> material 字段映射

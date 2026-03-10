@@ -74,6 +74,8 @@ def ensure_po_columns(cursor):
 
     # ── purchase_order_bd 子表新增字段 ─────────────────────────────────
 
+    _add_column_if_not_exists(cursor, 'purchase_order_bd', 'item_code',
+                              "VARCHAR(50) NULL COMMENT '物料编号（原始）'")
     _add_column_if_not_exists(cursor, 'purchase_order_bd', 'model_num',
                               "VARCHAR(200) NULL COMMENT '型号'")
     _add_column_if_not_exists(cursor, 'purchase_order_bd', 'size_info',

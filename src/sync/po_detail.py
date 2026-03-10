@@ -113,9 +113,8 @@ def insert_po_lines(
     """
     stats = {
         'inserted': 0,
-        'inserted_no_sku': 0,      # 插入成功（无物料编号）
+        'inserted_no_sku': 0,      # 插入成功（sku=NULL：无物料编号或 material 表中找不到）
         'skipped_service': 0,      # 跳过：服务类
-        'skipped_not_found': 0,    # 跳过：物料未找到
         'failed': 0                # 失败：插入错误
     }
     
@@ -131,18 +130,10 @@ def insert_po_lines(
             stats['skipped_service'] += 1
             continue
         
-        # 物料类订单行
-        if item_code:
-            # 有物料编号：查找物料ID
-            material_id = material_map.get(item_code)
-            
-            if not material_id:
-                print(f"    [WARN] 跳过物料 {item_code}（在 material 表中找不到ID）")
-                stats['skipped_not_found'] += 1
-                continue
-        else:
-            # 无物料编号：非标准物料，允许 sku 为 NULL
-            material_id = None
+        # 物料类订单行：查找物料ID；找不到时 sku=NULL 但 item_code 仍会保留
+        material_id = material_map.get(item_code) if item_code else None
+        if item_code and not material_id:
+            print(f"    [INFO] 物料 {item_code} 未在 material 表中，sku 置 NULL")
         
         # 查询仓库ID
         warehouse_code = line.get('storeloc')
@@ -223,12 +214,7 @@ def batch_map_details(
             if line_type in ['SERVICE', 'STDSERVICE']:
                 continue
 
-            if item_code:
-                material_id = material_map.get(item_code)
-                if not material_id:
-                    continue
-            else:
-                material_id = None
+            material_id = material_map.get(item_code) if item_code else None
 
             warehouse_code = line.get('storeloc')
             warehouse_id = None
@@ -276,7 +262,6 @@ def batch_insert_details(
         'inserted': 0,
         'inserted_no_sku': 0,
         'skipped_service': 0,
-        'skipped_not_found': 0,
         'failed': 0
     }
 
@@ -332,15 +317,12 @@ def batch_insert_details(
                 msg += f" ({', '.join(details)})"
             print(msg)
 
+    total_inserted = total_stats['inserted'] + total_stats['inserted_no_sku']
     print(f"\n[INFO] 订单明细处理完成:")
     print(f"  总行数: {total_stats['total_lines']}")
-    print(f"  成功插入: {total_stats['inserted']} (标准物料)")
-    if total_stats['inserted_no_sku'] > 0:
-        print(f"  成功插入: {total_stats['inserted_no_sku']} (非标准物料)")
+    print(f"  成功插入: {total_inserted} (含 {total_stats['inserted_no_sku']} 条 sku=NULL)")
     if total_stats['skipped_service'] > 0:
         print(f"  跳过（服务类）: {total_stats['skipped_service']}")
-    if total_stats['skipped_not_found'] > 0:
-        print(f"  跳过（物料未找到）: {total_stats['skipped_not_found']}")
     if total_stats['failed'] > 0:
         print(f"  失败: {total_stats['failed']}")
 
