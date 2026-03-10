@@ -11,7 +11,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.utils.db import generate_id, format_datetime
-from src.utils.mapper import PO_HEADER_MAPPING, VENDOR_FIELD_CANDIDATES, BILLTO_FIELD_CANDIDATES
+from src.utils.mapper import PO_HEADER_MAPPING, VENDOR_FIELD_CANDIDATES, BILLTO_FIELD_CANDIDATES  # noqa: E501
 
 
 def _first_nonempty(data: dict, keys: list) -> str:
@@ -99,16 +99,16 @@ def map_header_data(cursor, po_data: Dict) -> Dict:
 
     # ── 供应商扩展信息（来自 Maximo PO 供应商字段）────────────────────────
     vc = VENDOR_FIELD_CANDIDATES
-    result['vendor_code']      = _first_nonempty(po_data, vc['vendor_code']) or None
-    result['supplier_address'] = _first_nonempty(po_data, vc['supplier_address']) or None
-    result['supplier_zip']     = _first_nonempty(po_data, vc['supplier_zip']) or None
-    result['supplier_city']    = _first_nonempty(po_data, vc['supplier_city']) or None
-    # supplier_country: 业务要求不抓，留空
-    result['supplier_contact'] = _first_nonempty(po_data, vc['supplier_contact']) or None
-    result['supplier_phone']   = _first_nonempty(po_data, vc['supplier_phone']) or None
-    result['supplier_email']   = _first_nonempty(po_data, vc['supplier_email']) or None
+    result['vendor_code']       = _first_nonempty(po_data, vc['vendor_code']) or None
+    result['supplier_address']  = _first_nonempty(po_data, vc['supplier_address']) or None
+    result['supplier_zip']      = _first_nonempty(po_data, vc['supplier_zip']) or None
+    result['supplier_city']     = _first_nonempty(po_data, vc['supplier_city']) or None
+    result['supplier_country']  = _first_nonempty(po_data, vc['supplier_country']) or None
+    result['supplier_contact']  = _first_nonempty(po_data, vc['supplier_contact']) or None
+    result['supplier_phone']    = _first_nonempty(po_data, vc['supplier_phone']) or None
+    result['supplier_email']    = _first_nonempty(po_data, vc['supplier_email']) or None
 
-    # ── 收款方信息（billto）───────────────────────────────────────────────
+    # ── 收款方信息（billto）+ 内部买方信息 ────────────────────────────────
     bc = BILLTO_FIELD_CANDIDATES
     result['company_name'] = _first_nonempty(po_data, bc['company_name']) or None
 
@@ -117,18 +117,16 @@ def map_header_data(cursor, po_data: Dict) -> Dict:
     addr2 = _first_nonempty(po_data, bc['street_address_2'])
     result['street_address'] = ' '.join(filter(None, [addr1, addr2])) or None
 
-    result['postal_code'] = _first_nonempty(po_data, bc['postal_code']) or None
-    result['city']        = _first_nonempty(po_data, bc['city']) or None
-    result['country']     = 'China'  # 固定值
+    result['postal_code']    = _first_nonempty(po_data, bc['postal_code']) or None
+    result['city']           = _first_nonempty(po_data, bc['city']) or None
+    result['country']        = _first_nonempty(po_data, bc['country']) or None
 
-    # 联系人、联系电话、电子邮件、接收人：业务要求不抓，留空
-    result['contact_person'] = None
-    result['contact_phone']  = None
-    result['contact_email']  = None
-    result['receiver']       = None
+    result['contact_person'] = _first_nonempty(po_data, bc['contact_person']) or None
+    result['contact_phone']  = _first_nonempty(po_data, bc['contact_phone']) or None
+    result['contact_email']  = _first_nonempty(po_data, bc['contact_email']) or None
+    result['receiver']       = _first_nonempty(po_data, bc['receiver']) or None
 
-    # 斯堪尼亚客户代码：业务要求不填，留空
-    result['scania_customer_code'] = None
+    result['scania_customer_code'] = _first_nonempty(po_data, bc['scania_customer_code']) or None
 
     return result
 

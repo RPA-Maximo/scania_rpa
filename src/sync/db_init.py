@@ -37,6 +37,8 @@ def ensure_po_columns(cursor):
                               "VARCHAR(20) NULL COMMENT '供应商邮政编码'")
     _add_column_if_not_exists(cursor, 'purchase_order', 'supplier_city',
                               "VARCHAR(100) NULL COMMENT '供应商城市'")
+    _add_column_if_not_exists(cursor, 'purchase_order', 'supplier_country',
+                              "VARCHAR(100) NULL COMMENT '供应商国家'")
     _add_column_if_not_exists(cursor, 'purchase_order', 'supplier_contact',
                               "VARCHAR(100) NULL COMMENT '供应商联系人'")
     _add_column_if_not_exists(cursor, 'purchase_order', 'supplier_phone',

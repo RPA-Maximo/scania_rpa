@@ -23,25 +23,30 @@ PO_HEADER_MAPPING = {
 # Maximo MXAPIPO 供应商字段候选名（取第一个非空值）
 # 不同 Maximo 版本字段名可能不同
 VENDOR_FIELD_CANDIDATES = {
-    'vendor_code':      ['vendor'],
-    'supplier_address': ['venaddress1', 'venaddr1', 'vendoraddr1'],
-    'supplier_zip':     ['venzip', 'venpostalcode'],
-    'supplier_city':    ['vencity'],
-    # supplier_country: 不抓（业务要求）
-    'supplier_contact': ['vencontact'],
-    'supplier_phone':   ['venphone'],
-    'supplier_email':   ['cxpoemail', 'venemail'],  # cxpoemail = 接收PO的邮箱
+    'vendor_code':       ['vendor'],
+    'supplier_address':  ['venaddress1', 'venaddr1', 'vendoraddr1'],
+    'supplier_zip':      ['venzip', 'venpostalcode'],
+    'supplier_city':     ['vencity'],
+    'supplier_country':  ['vencountry', 'vennation'],           # 供应商国家
+    'supplier_contact':  ['vencontact'],
+    'supplier_phone':    ['venphone'],
+    'supplier_email':    ['cxpoemail', 'venemail'],             # cxpoemail = 接收PO的邮箱
 }
 
-# Maximo MXAPIPO 收款方（Bill To）字段候选名
+# Maximo MXAPIPO 收款方（Bill To）+ 内部买方字段候选名
 # 对应 Maximo UI "收货方/收款人" 标签页右侧"收款方"区域
 BILLTO_FIELD_CANDIDATES = {
-    'company_name':     ['billtocomp', 'billtoname'],
-    'street_address_1': ['billtoaddress1', 'billtoaddr1'],
-    'street_address_2': ['billtoaddress2', 'billtoaddr2'],
-    'postal_code':      ['billtozip', 'billtopostalcode'],
-    'city':             ['billtocity'],
-    # country: 固定为 China
+    'company_name':         ['billtocomp', 'billtoname'],
+    'street_address_1':     ['billtoaddress1', 'billtoaddr1'],
+    'street_address_2':     ['billtoaddress2', 'billtoaddr2'],
+    'postal_code':          ['billtozip', 'billtopostalcode'],
+    'city':                 ['billtocity'],
+    'country':              ['billtocountry'],                  # 国家（动态拉取，不写死）
+    'contact_person':       ['billtoattn', 'billtocontact'],    # 联系人
+    'contact_phone':        ['billtophone'],                    # 联系电话
+    'contact_email':        ['billtoemail', 'contactemail'],    # 联系邮件
+    'receiver':             ['shiptoattn', 'shiptocontact', 'shiptocomp'],  # 接收人
+    'scania_customer_code': ['buyercode', 'custcode', 'ourreference'],      # 斯堪尼亚客户代码
 }
 
 # JSON 字段 -> 数据库字段映射 (订单明细)

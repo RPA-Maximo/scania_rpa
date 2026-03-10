@@ -93,8 +93,10 @@ def fetch_po_by_number(po_number: str, save_to_file: bool = True) -> Optional[di
             'requireddate,'
             'vendor,vendorname,'
             'venaddress1,venaddr1,'
+            'venaddress2,venaddr2,'
             'venzip,venpostalcode,'
             'vencity,'
+            'vencountry,vennation,'
             'vencontact,'
             'venphone,'
             'venemail,cxpoemail,'
@@ -102,7 +104,13 @@ def fetch_po_by_number(po_number: str, save_to_file: bool = True) -> Optional[di
             'billtoaddress1,billtoaddr1,'
             'billtoaddress2,billtoaddr2,'
             'billtocity,'
-            'billtozip,billtopostalcode'
+            'billtozip,billtopostalcode,'
+            'billtocountry,'
+            'billtoattn,billtocontact,'
+            'billtophone,'
+            'billtoemail,contactemail,'
+            'shiptoattn,shiptocontact,shiptocomp,'
+            'buyercode,custcode,ourreference'
         ),
         'oslc.where': f'ponum="{po_number}"',
         '_dropnulls': 0,
@@ -222,8 +230,10 @@ def fetch_po_list(
                     'requireddate,'
                     'vendor,vendorname,'
                     'venaddress1,venaddr1,'
+                    'venaddress2,venaddr2,'
                     'venzip,venpostalcode,'
                     'vencity,'
+                    'vencountry,vennation,'
                     'vencontact,'
                     'venphone,'
                     'venemail,cxpoemail,'
@@ -231,7 +241,13 @@ def fetch_po_list(
                     'billtoaddress1,billtoaddr1,'
                     'billtoaddress2,billtoaddr2,'
                     'billtocity,'
-                    'billtozip,billtopostalcode'
+                    'billtozip,billtopostalcode,'
+                    'billtocountry,'
+                    'billtoattn,billtocontact,'
+                    'billtophone,'
+                    'billtoemail,contactemail,'
+                    'shiptoattn,shiptocontact,shiptocomp,'
+                    'buyercode,custcode,ourreference'
                 ),
                 'oslc.pageSize': page_size,
                 '_dropnulls': 0,

@@ -81,6 +81,7 @@ DDL_STATEMENTS = {
             `supplier_address`    VARCHAR(500)  NULL                         COMMENT '供应商地址',
             `supplier_zip`        VARCHAR(20)   NULL                         COMMENT '供应商邮政编码',
             `supplier_city`       VARCHAR(100)  NULL                         COMMENT '供应商城市',
+            `supplier_country`    VARCHAR(100)  NULL                         COMMENT '供应商国家',
             `supplier_contact`    VARCHAR(100)  NULL                         COMMENT '供应商联系人',
             `supplier_phone`      VARCHAR(50)   NULL                         COMMENT '供应商电话',
             `supplier_email`      VARCHAR(200)  NULL                         COMMENT '供应商邮箱',
