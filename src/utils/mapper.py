@@ -23,14 +23,16 @@ PO_HEADER_MAPPING = {
 # Maximo MXAPIPO 供应商字段候选名（取第一个非空值）
 # 不同 Maximo 版本字段名可能不同
 VENDOR_FIELD_CANDIDATES = {
-    'vendor_code':       ['vendor'],
-    'supplier_address':  ['venaddress1', 'venaddr1', 'vendoraddr1'],
-    'supplier_zip':      ['venzip', 'venpostalcode'],
-    'supplier_city':     ['vencity'],
-    'supplier_country':  ['vencountry', 'vennation'],           # 供应商国家
-    'supplier_contact':  ['vencontact'],
-    'supplier_phone':    ['venphone'],
-    'supplier_email':    ['cxpoemail', 'venemail'],             # cxpoemail = 接收PO的邮箱
+    'vendor_code':        ['vendor'],
+    'supplier_address':   ['venaddress1', 'venaddr1', 'vendoraddr1'],
+    'supplier_address2':  ['venaddress2', 'venaddr2'],          # 供应商地址2
+    'supplier_zip':       ['venzip', 'venpostalcode'],
+    'supplier_city':      ['vencity'],
+    'supplier_state':     ['venstate', 'venprovince', 'venregion'],  # 供应商省/区
+    'supplier_country':   ['vencountry', 'vennation'],          # 供应商国家
+    'supplier_contact':   ['vencontact'],
+    'supplier_phone':     ['venphone'],
+    'supplier_email':     ['cxpoemail', 'venemail'],            # cxpoemail = 接收PO的邮箱
 }
 
 # Maximo MXAPIPO 收款方（Bill To）+ 内部买方字段候选名
@@ -57,10 +59,12 @@ PO_LINE_MAPPING = {
     'receiptscomplete': 'receive_status',
     'orderunit': 'ordering_unit',
     'unitcost': 'unit_cost',
+    'polinediscpct': 'discount_pct',    # 折扣%
     'linecost': 'line_cost',
     'catalogcode': 'model_num',         # 型号
     'newitemdesc': 'size_info',         # 尺寸/规格
     'location': 'target_container',     # 目标货柜
+    # 'currency' 优先取行级字段，fallback 到 PO 头 currencycode（在 map_line_data 中处理）
     # 'itemnum' 需要通过查询 material 表获取 id，映射到 'sku'
     # 'storeloc' 通过查询 warehouse 表获取 id，映射到 'warehouse'
 }

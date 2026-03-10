@@ -96,6 +96,7 @@ def fetch_po_by_number(po_number: str, save_to_file: bool = True) -> Optional[di
             'venaddress2,venaddr2,'
             'venzip,venpostalcode,'
             'vencity,'
+            'venstate,venprovince,'
             'vencountry,vennation,'
             'vencontact,'
             'venphone,'

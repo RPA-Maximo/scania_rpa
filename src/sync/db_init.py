@@ -32,11 +32,15 @@ def ensure_po_columns(cursor):
     _add_column_if_not_exists(cursor, 'purchase_order', 'vendor_code',
                               "VARCHAR(50) NULL COMMENT '供应商编号'")
     _add_column_if_not_exists(cursor, 'purchase_order', 'supplier_address',
-                              "VARCHAR(500) NULL COMMENT '供应商地址'")
+                              "VARCHAR(500) NULL COMMENT '供应商地址1'")
+    _add_column_if_not_exists(cursor, 'purchase_order', 'supplier_address2',
+                              "VARCHAR(500) NULL COMMENT '供应商地址2'")
     _add_column_if_not_exists(cursor, 'purchase_order', 'supplier_zip',
                               "VARCHAR(20) NULL COMMENT '供应商邮政编码'")
     _add_column_if_not_exists(cursor, 'purchase_order', 'supplier_city',
                               "VARCHAR(100) NULL COMMENT '供应商城市'")
+    _add_column_if_not_exists(cursor, 'purchase_order', 'supplier_state',
+                              "VARCHAR(100) NULL COMMENT '供应商省/区'")
     _add_column_if_not_exists(cursor, 'purchase_order', 'supplier_country',
                               "VARCHAR(100) NULL COMMENT '供应商国家'")
     _add_column_if_not_exists(cursor, 'purchase_order', 'supplier_contact',
@@ -74,6 +78,10 @@ def ensure_po_columns(cursor):
                               "VARCHAR(200) NULL COMMENT '型号'")
     _add_column_if_not_exists(cursor, 'purchase_order_bd', 'size_info',
                               "VARCHAR(500) NULL COMMENT '尺寸/规格'")
+    _add_column_if_not_exists(cursor, 'purchase_order_bd', 'discount_pct',
+                              "VARCHAR(20) NULL COMMENT '折扣%'")
+    _add_column_if_not_exists(cursor, 'purchase_order_bd', 'currency',
+                              "VARCHAR(10) NULL COMMENT '订单货币'")
     _add_column_if_not_exists(cursor, 'purchase_order_bd', 'target_container',
                               "VARCHAR(100) NULL COMMENT '目标货柜'")
 

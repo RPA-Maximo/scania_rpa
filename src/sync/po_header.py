@@ -99,14 +99,16 @@ def map_header_data(cursor, po_data: Dict) -> Dict:
 
     # ── 供应商扩展信息（来自 Maximo PO 供应商字段）────────────────────────
     vc = VENDOR_FIELD_CANDIDATES
-    result['vendor_code']       = _first_nonempty(po_data, vc['vendor_code']) or None
-    result['supplier_address']  = _first_nonempty(po_data, vc['supplier_address']) or None
-    result['supplier_zip']      = _first_nonempty(po_data, vc['supplier_zip']) or None
-    result['supplier_city']     = _first_nonempty(po_data, vc['supplier_city']) or None
-    result['supplier_country']  = _first_nonempty(po_data, vc['supplier_country']) or None
-    result['supplier_contact']  = _first_nonempty(po_data, vc['supplier_contact']) or None
-    result['supplier_phone']    = _first_nonempty(po_data, vc['supplier_phone']) or None
-    result['supplier_email']    = _first_nonempty(po_data, vc['supplier_email']) or None
+    result['vendor_code']        = _first_nonempty(po_data, vc['vendor_code']) or None
+    result['supplier_address']   = _first_nonempty(po_data, vc['supplier_address']) or None
+    result['supplier_address2']  = _first_nonempty(po_data, vc['supplier_address2']) or None
+    result['supplier_zip']       = _first_nonempty(po_data, vc['supplier_zip']) or None
+    result['supplier_city']      = _first_nonempty(po_data, vc['supplier_city']) or None
+    result['supplier_state']     = _first_nonempty(po_data, vc['supplier_state']) or None
+    result['supplier_country']   = _first_nonempty(po_data, vc['supplier_country']) or None
+    result['supplier_contact']   = _first_nonempty(po_data, vc['supplier_contact']) or None
+    result['supplier_phone']     = _first_nonempty(po_data, vc['supplier_phone']) or None
+    result['supplier_email']     = _first_nonempty(po_data, vc['supplier_email']) or None
 
     # ── 收款方信息（billto）+ 内部买方信息 ────────────────────────────────
     bc = BILLTO_FIELD_CANDIDATES

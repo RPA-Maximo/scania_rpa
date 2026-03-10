@@ -40,16 +40,23 @@ def get_warehouse_id(cursor, warehouse_code: str) -> int:
         return None
 
 
-def map_line_data(line_data: Dict, form_id: int, material_id: int = None, warehouse_id: int = None) -> Dict:
+def map_line_data(
+    line_data: Dict,
+    form_id: int,
+    material_id: int = None,
+    warehouse_id: int = None,
+    header_currency: str = None,
+) -> Dict:
     """
     将订单明细 JSON 映射到数据库字段
-    
+
     Args:
         line_data: 明细行 JSON 数据
         form_id: 订单头ID
         material_id: 物料ID（可选，对于非标准物料可以为 None）
         warehouse_id: 仓库ID（可选）
-        
+        header_currency: PO 头货币代码（poline 无行级货币时的 fallback）
+
     Returns:
         dict: 映射后的数据库字段
     """
@@ -61,30 +68,36 @@ def map_line_data(line_data: Dict, form_id: int, material_id: int = None, wareho
         'create_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'del_flag': 0,
     }
-    
+
     for json_field, db_field in PO_LINE_MAPPING.items():
         value = line_data.get(json_field)
-        
+
         # 布尔值转字符串
         if isinstance(value, bool):
             value = '是' if value else '否'
-        
+
         # 数值转字符串或保留原值
         if db_field == 'qty':
             value = int(value) if value else 0
         elif isinstance(value, (int, float)) and db_field not in ['id', 'form_id', 'sku', 'warehouse']:
             value = str(value)
-        
+
         result[db_field] = value
-    
+
+    # 货币：优先取行级 currency，fallback 到 PO 头 currencycode
+    result['currency'] = (
+        line_data.get('currency') or line_data.get('currencycode') or header_currency or None
+    )
+
     return result
 
 
 def insert_po_lines(
-    cursor, 
-    lines: List[Dict], 
-    form_id: int, 
-    material_map: Dict[str, int]
+    cursor,
+    lines: List[Dict],
+    form_id: int,
+    material_map: Dict[str, int],
+    header_currency: str = None,
 ) -> Dict:
     """
     插入订单明细
@@ -147,7 +160,7 @@ def insert_po_lines(
                     print(f"    [WARN] 仓库 {warehouse_code} 在 warehouse 表中找不到ID")
         
         # 映射并插入数据
-        line_data = map_line_data(line, form_id, material_id, warehouse_id)
+        line_data = map_line_data(line, form_id, material_id, warehouse_id, header_currency)
         
         columns = ', '.join(line_data.keys())
         placeholders = ', '.join(['%s'] * len(line_data))
@@ -199,6 +212,7 @@ def batch_map_details(
         if not form_id:
             continue
 
+        header_currency = po_data.get('currencycode') or None
         poline = po_data.get('poline', [])
         cleaned_lines = []
 
@@ -223,7 +237,7 @@ def batch_map_details(
                     warehouse_cache[warehouse_code] = get_warehouse_id(cursor, warehouse_code)
                 warehouse_id = warehouse_cache[warehouse_code]
 
-            cleaned_lines.append(map_line_data(line, form_id, material_id, warehouse_id))
+            cleaned_lines.append(map_line_data(line, form_id, material_id, warehouse_id, header_currency))
 
         result[po_code] = cleaned_lines
         total_lines += len(cleaned_lines)
