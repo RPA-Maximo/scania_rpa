@@ -78,11 +78,20 @@ def map_line_data(
 
         # 数值转字符串或保留原值
         if db_field == 'qty':
-            value = int(value) if value else 0
+            # 保留小数精度（Maximo 可能返回非整数数量）
+            try:
+                value = float(value) if value is not None else 0
+            except (TypeError, ValueError):
+                value = 0
         elif isinstance(value, (int, float)) and db_field not in ['id', 'form_id', 'sku', 'warehouse']:
             value = str(value)
 
         result[db_field] = value
+
+    # 尺寸/规格：newitemdesc 仅在 free-text 行有值，catalog 物料行为 NULL；
+    # 此时回退使用 description（物料名称，通常含规格信息）
+    if not result.get('size_info'):
+        result['size_info'] = result.get('sku_names') or ''
 
     # 货币：优先取行级 currency，fallback 到 PO 头 currencycode
     result['currency'] = (

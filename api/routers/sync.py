@@ -220,7 +220,7 @@ async def export_po_excel(
                 SELECT
                     p.code              AS `PO号`,
                     b.number            AS `行号`,
-                    m.code              AS `物料编号`,
+                    COALESCE(b.item_code, m.code) AS `物料编号`,
                     b.sku_names         AS `物料名称`,
                     b.model_num         AS `型号`,
                     b.size_info         AS `尺寸`,
