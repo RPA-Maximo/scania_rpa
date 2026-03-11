@@ -2,44 +2,31 @@
 一键启动 Maximo RPA 服务
 
 自动完成以下步骤：
-1. 检查并启动浏览器（调试模式）
-2. 检查 Maximo 登录状态
+1. 启动浏览器并导航至 Maximo manage-shell（自动免登录）
+2. 确认 Maximo 页面就绪
 3. 启动 API 服务
 
 使用方法：
-    python start_service.py              # 正常启动
-    python start_service.py --clean      # 清理旧进程后启动
+    python start_service.py
 """
 import subprocess
-import os
 import sys
 import time
-import requests
 import asyncio
 from pathlib import Path
 
-# 添加项目根目录到路径
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config.browser import (
-    BROWSER_PATH,
-    BROWSER_NAME,
-    USER_DATA_DIR,
-    DEBUG_PORT,
-    MAXIMO_LOGIN_URL
-)
-
-# Windows 平台需要设置事件循环策略
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
+from config.browser import MAXIMO_SHELL_URL, MAXIMO_LOGIN_URL
 
 # API 配置
 API_PORT = 8000
 
 
 def print_header(title):
-    """打印标题"""
     print()
     print("=" * 60)
     print(title)
@@ -47,235 +34,47 @@ def print_header(title):
     print()
 
 
-def kill_edge_processes():
-    """杀掉所有 Edge 进程"""
-    print("正在关闭所有 Edge 进程...")
-    try:
-        # Windows 使用 taskkill
-        result = subprocess.run(
-            ["taskkill", "/F", "/IM", "msedge.exe", "/T"],
-            capture_output=True,
-            text=True
-        )
-        
-        if "成功" in result.stdout or "SUCCESS" in result.stdout:
-            print("✓ Edge 进程已关闭")
-            time.sleep(2)  # 等待进程完全关闭
-            return True
-        elif "找不到" in result.stdout or "not found" in result.stdout.lower():
-            print("✓ 没有运行中的 Edge 进程")
-            return True
-        else:
-            print(f"⚠ {result.stdout}")
-            return True
-    except Exception as e:
-        print(f"⚠ 无法关闭 Edge 进程: {e}")
-        return False
+async def launch_and_verify():
+    """
+    启动浏览器，导航至 Maximo manage-shell，并验证登录状态。
 
-
-def check_browser_running():
-    """检查浏览器是否已在调试模式运行"""
-    try:
-        response = requests.get(f"http://localhost:{DEBUG_PORT}/json/version", timeout=2)
-        return response.status_code == 200
-    except:
-        return False
-
-
-def check_maximo_logged_in():
-    """检查是否已登录 Maximo（通过检查是否有 maximo 页面）"""
-    try:
-        response = requests.get(f"http://localhost:{DEBUG_PORT}/json", timeout=2)
-        pages = response.json()
-
-        login_url = None
-        for page in pages:
-            url = page.get('url', '')
-            url_lower = url.lower()
-            # 已登录：suite.maximo.com 系统界面，但不是 auth. 登录域
-            if 'suite.maximo.com' in url_lower and 'auth.' not in url_lower:
-                return True, url
-            # 记录登录页
-            if 'auth.' in url_lower or 'login' in url_lower:
-                login_url = url
-
-        return False, login_url
-    except:
-        return False, None
-
-
-def navigate_to_manage_shell(page_id: str):
-    """导航到 manage-shell 页面"""
-    target_url = "https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell"
-    
-    try:
-        # 使用 CDP 协议导航页面
-        response = requests.post(
-            f"http://localhost:{DEBUG_PORT}/json",
-            json={
-                "method": "Page.navigate",
-                "params": {
-                    "url": target_url
-                }
-            },
-            timeout=5
-        )
-        return True
-    except Exception as e:
-        print(f"⚠ 导航失败: {e}")
-        return False
-
-
-async def navigate_to_manage_shell_async():
-    """使用 Playwright 导航到 manage-shell 页面并点击菜单"""
-    from playwright.async_api import async_playwright
+    Returns:
+        (context, page, frame): 成功时返回三元组
+        None: 需要重新登录
+    """
+    from rpa.browser import connect_to_browser
     from rpa.navigation import click_menu_purchase, click_menu_receipts
-    
-    target_url = "https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell"
-    
+
+    print("正在启动浏览器...")
     try:
-        p = await async_playwright().start()
-        browser = await p.chromium.connect_over_cdp(f"http://localhost:{DEBUG_PORT}")
-        
-        # 查找 home 页面
-        home_page = None
-        for context in browser.contexts:
-            for page in context.pages:
-                if "main.home.scania-acc.suite.maximo.com" in page.url:
-                    home_page = page
-                    break
-            if home_page:
-                break
-        
-        if home_page:
-            print(f"✓ 找到 home 页面，正在导航...")
-            await home_page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
-            print(f"✓ 导航成功：{target_url}")
-            
-            # 等待页面加载
-            print("⏳ 等待页面加载 60 秒...")
-            await asyncio.sleep(60)
-            
-            # 列出所有 iframe 用于调试
-            print("\n所有 iframe:")
-            for i, frame in enumerate(home_page.frames):
-                print(f"  Frame {i}: {frame.url[:100]}")
-            print()
-            
-            # 查找包含菜单的 iframe (特征: URL 包含 "maximo/ui/" 和 "uisessionid")
-            print("正在查找菜单 iframe...")
-            main_frame = None
-            for frame in home_page.frames:
-                if "maximo/ui/" in frame.url and "uisessionid" in frame.url:
-                    main_frame = frame
-                    print(f"✓ 找到菜单 iframe: {frame.url[:80]}...")
-                    break
-            
-            if not main_frame:
-                print("⚠ 未找到菜单 iframe，使用 main_frame")
-                main_frame = home_page.main_frame
-            
-            # 点击"采购"菜单
-            print("正在点击'采购'菜单...")
-            try:
-                await click_menu_purchase(main_frame)
-                print("✓ 已点击'采购'菜单")
-            except Exception as e:
-                print(f"⚠ 点击'采购'菜单失败: {e}")
-            
-            # 点击"接收"菜单
-            print("正在点击'接收'菜单...")
-            try:
-                await click_menu_receipts(main_frame)
-                print("✓ 已点击'接收'菜单")
-            except Exception as e:
-                print(f"⚠ 点击'接收'菜单失败: {e}")
-            
-            # 额外等待让接收页面完全加载
-            print("⏳ 等待接收页面加载...")
-            await asyncio.sleep(3)
-            print("✓ 导航完成")
-            
-            await browser.close()
-            await p.stop()
-            return True
-        else:
-            print("⚠ 未找到 home 页面")
-            await browser.close()
-            await p.stop()
-            return False
-            
+        p, context, page, frame = await connect_to_browser()
+        print(f"✓ 浏览器已启动")
+        print(f"  当前页面: {page.url}")
+        return p, context, page, frame
     except Exception as e:
-        print(f"⚠ 导航失败: {e}")
-        return False
+        error_str = str(e)
+        if "登录" in error_str:
+            print(f"⚠ {error_str}")
+            return None
+        raise
 
 
-def start_browser():
-    """启动浏览器"""
-    if not BROWSER_PATH or not os.path.exists(BROWSER_PATH):
-        print(f"❌ 错误：未找到浏览器")
-        if BROWSER_PATH:
-            print(f"   路径：{BROWSER_PATH}")
-        return False
-    
-    print(f"正在启动 {BROWSER_NAME} 浏览器...")
-    
-    cmd = [
-        BROWSER_PATH,
-        f"--remote-debugging-port={DEBUG_PORT}",
-        f"--user-data-dir={USER_DATA_DIR}",
-        "--profile-directory=Default",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-background-timer-throttling",
-        MAXIMO_LOGIN_URL
-    ]
-    
+async def navigate_receipts(context, page, frame):
+    """导航到接收页面"""
+    from rpa.navigation import click_menu_purchase, click_menu_receipts
+
+    print()
+    print("正在导航到接收页面...")
     try:
-        subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        
-        # 等待浏览器启动
-        print("等待浏览器启动...", end="", flush=True)
-        for i in range(20):  # 等待最多 20 秒
-            time.sleep(1)
-            if check_browser_running():
-                print(" ✓")
-                return True
-            print(".", end="", flush=True)
-        
-        print(" ❌")
-        return False
-        
+        await click_menu_purchase(frame)
+        print("✓ 已点击'采购'菜单")
+        await asyncio.sleep(1)
+        await click_menu_receipts(frame)
+        print("✓ 已点击'接收'菜单")
+        await asyncio.sleep(3)
+        print("✓ 接收页面已就绪")
     except Exception as e:
-        print(f"\n❌ 启动失败：{e}")
-        return False
-
-
-def wait_for_login():
-    """等待用户登录"""
-    print()
-    print("⏳ 等待登录 Maximo...")
-    print("   请在浏览器中完成登录")
-    print()
-    
-    for i in range(60):  # 最多等待 60 秒
-        time.sleep(1)
-        logged_in, url = check_maximo_logged_in()
-        if logged_in:
-            print(f"✓ 登录成功！")
-            print(f"  当前页面：{url}")
-            return True
-        
-        if i % 5 == 0:
-            print(f"  等待中... ({i}s)", end="\r", flush=True)
-    
-    print()
-    print("❌ 登录超时")
-    return False
+        print(f"⚠ 自动导航失败 ({e})，请手动导航")
 
 
 def start_api():
@@ -284,9 +83,8 @@ def start_api():
     print("正在启动 API 服务...")
     print(f"  端口：{API_PORT}")
     print()
-    
+
     try:
-        # 使用 uvicorn 启动 API
         subprocess.run([
             sys.executable,
             "-m", "uvicorn",
@@ -301,94 +99,57 @@ def start_api():
 
 
 def main():
-    """主流程"""
-    # 检查命令行参数
-    clean_mode = "--clean" in sys.argv or "-c" in sys.argv
-    
     print_header("Maximo RPA 服务启动")
-    
-    # 如果是清理模式，先杀掉所有 Edge 进程
-    if clean_mode:
-        print("🧹 清理模式：将关闭所有 Edge 进程")
-        kill_edge_processes()
+    print(f"目标页面: {MAXIMO_SHELL_URL}")
+    print()
+
+    # 步骤 1: 启动浏览器并验证
+    print("步骤 1/2: 启动浏览器")
+    result = None
+    try:
+        result = asyncio.run(launch_and_verify())
+    except Exception as e:
+        print(f"❌ 浏览器启动失败: {e}")
+        sys.exit(1)
+
+    if result is None:
+        # 需要重新登录
         print()
-    
-    # 步骤 1: 检查/启动浏览器
-    print("步骤 1/3: 检查浏览器")
-    if check_browser_running():
-        print("✓ 浏览器已运行")
-    else:
-        print("浏览器未运行，正在启动...")
-        if not start_browser():
-            print()
-            print("❌ 浏览器启动失败")
-            print()
-            print("💡 提示：")
-            print("   1. 可能有其他 Edge 进程占用端口")
-            print("   2. 尝试使用清理模式：python start_service.py --clean")
-            print("   3. 或手动关闭所有 Edge 窗口后重试")
-            return False
-        print("✓ 浏览器启动成功")
-    
-    # 步骤 2: 检查登录状态
+        print(f"请在打开的浏览器中登录 Maximo：")
+        print(f"  {MAXIMO_LOGIN_URL}")
+        print()
+        input("登录完成后按回车键继续...")
+
+        try:
+            result = asyncio.run(launch_and_verify())
+        except Exception as e:
+            print(f"❌ 仍无法连接: {e}")
+            sys.exit(1)
+
+    if result is None:
+        print("❌ 登录验证失败，请重新运行")
+        sys.exit(1)
+
+    p, context, page, frame = result
+    print("✓ Maximo 连接成功")
+
+    # 步骤 2: 启动 API
     print()
-    print("步骤 2/3: 检查登录状态")
-    logged_in, url = check_maximo_logged_in()
-    
-    if logged_in:
-        print(f"✓ 已登录 Maximo")
-        print(f"  当前页面：{url}")
-        
-        # 检查是否在 home 页面，如果是则跳转到 manage-shell
-        if url and 'main.home.scania-acc.suite.maximo.com' in url:
-            print()
-            print("检测到 home 页面，正在跳转到 manage-shell...")
-            
-            # 使用异步函数导航
-            try:
-                success = asyncio.run(navigate_to_manage_shell_async())
-                if not success:
-                    print("⚠ 自动跳转失败，请手动导航")
-                    print("  目标地址：https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell")
-                    print()
-                    input("完成后按回车键继续...")
-            except Exception as e:
-                print(f"⚠ 跳转过程出现问题: {e}")
-                print("  请手动在浏览器中导航到 manage-shell 页面")
-                print("  目标地址：https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell")
-                print()
-                input("完成后按回车键继续...")
-    else:
-        if url:
-            print(f"⚠ 检测到登录页面：{url}")
-        else:
-            print(f"⚠ 未检测到 Maximo 页面")
-        
-        if not wait_for_login():
-            print()
-            print("❌ 请先登录 Maximo，然后重新运行此脚本")
-            return False
-    
-    # 步骤 3: 启动 API
-    print()
-    print("步骤 3/3: 启动 API 服务")
+    print("步骤 2/2: 启动 API 服务")
     print()
     print_header("服务已就绪")
-    print("API 文档：http://localhost:8000/docs")
-    print("健康检查：http://localhost:8000/health")
+    print(f"  API 文档:  http://localhost:{API_PORT}/docs")
+    print(f"  健康检查:  http://localhost:{API_PORT}/health")
     print()
     print("按 Ctrl+C 停止服务")
     print()
-    
+
     start_api()
-    return True
 
 
 if __name__ == "__main__":
     try:
-        success = main()
-        if not success:
-            sys.exit(1)
+        main()
     except KeyboardInterrupt:
         print()
         print("服务已停止")
