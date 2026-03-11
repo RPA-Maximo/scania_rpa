@@ -239,7 +239,7 @@ class KeepaliveManager:
                 [sys.executable, str(worker_script)],
                 capture_output=True,
                 text=True,
-                timeout=60,  # 1 分钟超时
+                timeout=120,  # 2 分钟超时（导航重试最坏情况约 91s）
                 cwd=str(PROJECT_ROOT)
             )
 
@@ -297,14 +297,14 @@ class KeepaliveManager:
             self.last_keepalive_result = {
                 'success': False,
                 'reason': 'timeout',
-                'message': '保活脚本执行超时 (>60s)',
+                'message': '保活脚本执行超时 (>120s)',
                 'po_count': 0
             }
             self.last_keepalive_time = time.time()
             ka_logger.warning(
                 f"KEEPALIVE #{count} | ❌ TIMEOUT | "
                 f"会话已持续: {duration_str} | "
-                f"保活脚本超时 (>60s)"
+                f"保活脚本超时 (>120s)"
             )
 
         except Exception as e:
