@@ -246,18 +246,21 @@ async def _find_po_line_in_current_page(main_frame: Frame, po_line: str = None, 
                                 const cell = cells[i];
                                 
                                 // 查找 span（只读字段）
-                                const span = cell.querySelector('span[title]');
+                                // 优先找带 title 的 span，兜底找任意 span
+                                const span = cell.querySelector('span[title]') || cell.querySelector('span');
                                 if (span) {{
                                     const spanText = span.textContent.trim();
-                                    const spanTitle = span.getAttribute('title');
-                                    
+                                    const spanTitle = span.getAttribute('title') || '';
+                                    // title 属性通常包含完整值（不被 CSS 截断）
+                                    const val = spanTitle || spanText;
+
                                     // 根据列索引判断字段
-                                    if (i === {COLUMNS.PO_LINE}) rowData.poLine = spanText;
-                                    else if (i === {COLUMNS.ITEM_NUM}) rowData.itemNum = spanText;
-                                    else if (i === {COLUMNS.DESCRIPTION}) rowData.description = spanTitle || spanText;
-                                    else if (i === {COLUMNS.TO_STOREROOM}) rowData.toStoreroom = spanText;
-                                    else if (i === {COLUMNS.ORDER_QTY}) rowData.orderQty = spanText;
-                                    else if (i === {COLUMNS.RESERVED_QTY}) rowData.reservedQty = spanText;
+                                    if (i === {COLUMNS.PO_LINE}) rowData.poLine = val;
+                                    else if (i === {COLUMNS.ITEM_NUM}) rowData.itemNum = val;
+                                    else if (i === {COLUMNS.DESCRIPTION}) rowData.description = val;
+                                    else if (i === {COLUMNS.TO_STOREROOM}) rowData.toStoreroom = val;
+                                    else if (i === {COLUMNS.ORDER_QTY}) rowData.orderQty = val;
+                                    else if (i === {COLUMNS.RESERVED_QTY}) rowData.reservedQty = val;
                                 }}
                                 
                                 // 查找 input（可编辑字段）
@@ -441,7 +444,7 @@ async def edit_receipt_quantity(
             'newValue': new_value,
             'inputId': input_id
         }
-        
+
     except Exception as e:
         return {
             'success': False,
@@ -544,3 +547,56 @@ async def edit_remark(
             'message': f'修改失败: {str(e)}',
             'inputId': input_id
         }
+
+
+async def debug_table_columns(main_frame: Frame) -> Dict[str, Any]:
+    """
+    诊断工具：扫描当前弹窗中第一条有效数据行的所有列内容，
+    帮助校验 config.py 中 ColumnIndexes 的列索引是否正确。
+
+    返回:
+        {
+          'columns': [
+            {'index': 0, 'text': '...', 'title': '...', 'tag': 'span/input/td'},
+            ...
+          ]
+        }
+    """
+    result = await main_frame.evaluate("""
+        () => {
+            const allSpans = document.querySelectorAll('span[title]');
+            for (let span of allSpans) {
+                let row = span.closest('tr');
+                if (!row) continue;
+                const checkbox = row.querySelector('a[role="checkbox"] img');
+                if (!checkbox) continue;
+
+                const cells = row.querySelectorAll('td');
+                const columns = [];
+                for (let i = 0; i < cells.length; i++) {
+                    const cell = cells[i];
+                    const inputEl = cell.querySelector('input');
+                    const spanEl = cell.querySelector('span[title]') || cell.querySelector('span');
+                    if (inputEl) {
+                        columns.push({
+                            index: i, text: inputEl.value, title: '',
+                            tag: 'input', inputType: inputEl.type || 'text'
+                        });
+                    } else if (spanEl) {
+                        columns.push({
+                            index: i,
+                            text: spanEl.textContent.trim(),
+                            title: spanEl.getAttribute('title') || '',
+                            tag: 'span'
+                        });
+                    } else {
+                        const txt = cell.textContent.trim();
+                        if (txt) columns.push({index: i, text: txt, title: '', tag: 'td'});
+                    }
+                }
+                return {success: true, columns: columns};
+            }
+            return {success: false, columns: [], message: '未找到有效数据行'};
+        }
+    """)
+    return result
