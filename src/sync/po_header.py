@@ -105,7 +105,7 @@ def map_header_data(cursor, po_data: Dict) -> Dict:
     result['supplier_zip']       = _first_nonempty(po_data, vc['supplier_zip']) or None
     result['supplier_city']      = _first_nonempty(po_data, vc['supplier_city']) or None
     result['supplier_state']     = _first_nonempty(po_data, vc['supplier_state']) or None
-    result['supplier_country']   = _first_nonempty(po_data, vc['supplier_country']) or None
+    # supplier_country 不抓（供应商国家不拉）
     result['supplier_contact']   = _first_nonempty(po_data, vc['supplier_contact']) or None
     result['supplier_phone']     = _first_nonempty(po_data, vc['supplier_phone']) or None
     result['supplier_email']     = _first_nonempty(po_data, vc['supplier_email']) or None
@@ -123,12 +123,7 @@ def map_header_data(cursor, po_data: Dict) -> Dict:
     result['city']           = _first_nonempty(po_data, bc['city']) or None
     result['country']        = _first_nonempty(po_data, bc['country']) or None
 
-    result['contact_person'] = _first_nonempty(po_data, bc['contact_person']) or None
-    result['contact_phone']  = _first_nonempty(po_data, bc['contact_phone']) or None
-    result['contact_email']  = _first_nonempty(po_data, bc['contact_email']) or None
-    result['receiver']       = _first_nonempty(po_data, bc['receiver']) or None
-
-    result['scania_customer_code'] = _first_nonempty(po_data, bc['scania_customer_code']) or None
+    # contact_person / contact_phone / contact_email / receiver / scania_customer_code 均不抓
 
     return result
 

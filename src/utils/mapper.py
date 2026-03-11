@@ -29,7 +29,7 @@ VENDOR_FIELD_CANDIDATES = {
     'supplier_zip':       ['venzip', 'venpostalcode'],
     'supplier_city':      ['vencity'],
     'supplier_state':     ['venstate', 'venprovince', 'venregion'],  # 供应商省/区
-    'supplier_country':   ['vencountry', 'vennation'],          # 供应商国家
+    # supplier_country 不抓（供应商国家不拉）
     'supplier_contact':   ['vencontact'],
     'supplier_phone':     ['venphone'],
     'supplier_email':     ['cxpoemail', 'venemail'],            # cxpoemail = 接收PO的邮箱
@@ -44,11 +44,11 @@ BILLTO_FIELD_CANDIDATES = {
     'postal_code':          ['billtozip', 'billtopostalcode'],
     'city':                 ['billtocity'],
     'country':              ['billtocountry'],                  # 国家（动态拉取，不写死）
-    'contact_person':       ['billtoattn', 'billtocontact'],    # 联系人
-    'contact_phone':        ['billtophone'],                    # 联系电话
-    'contact_email':        ['billtoemail', 'contactemail'],    # 联系邮件
-    'receiver':             ['shiptoattn', 'shiptocontact', 'shiptocomp'],  # 接收人
-    'scania_customer_code': ['buyercode', 'custcode', 'ourreference'],      # 斯堪尼亚客户代码
+    # contact_person 不抓（联系人不抓默认表信息）
+    # contact_phone  不抓（联系电话不抓默认表信息）
+    # contact_email  不抓（电子邮件不抓，默认）
+    # receiver       不抓（接收人不抓）
+    # scania_customer_code 不填
 }
 
 # JSON 字段 -> 数据库字段映射 (订单明细)

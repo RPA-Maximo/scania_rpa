@@ -97,7 +97,7 @@ def fetch_po_by_number(po_number: str, save_to_file: bool = True) -> Optional[di
             'venzip,venpostalcode,'
             'vencity,'
             'venstate,venprovince,'
-            'vencountry,vennation,'
+            # vencountry/vennation 不抓（供应商国家不拉）
             'vencontact,'
             'venphone,'
             'venemail,cxpoemail,'
@@ -106,12 +106,10 @@ def fetch_po_by_number(po_number: str, save_to_file: bool = True) -> Optional[di
             'billtoaddress2,billtoaddr2,'
             'billtocity,'
             'billtozip,billtopostalcode,'
-            'billtocountry,'
-            'billtoattn,billtocontact,'
-            'billtophone,'
-            'billtoemail,contactemail,'
-            'shiptoattn,shiptocontact,shiptocomp,'
-            'buyercode,custcode,ourreference'
+            'billtocountry'
+            # billtoattn/billtocontact/billtophone/billtoemail/contactemail 不抓（联系人/电话/邮件不抓默认表信息）
+            # shiptoattn/shiptocontact/shiptocomp 不抓（接收人不抓）
+            # buyercode/custcode/ourreference 不填（斯堪尼亚客户代码不填）
         ),
         'oslc.where': f'ponum="{po_number}"',
         '_dropnulls': 0,
@@ -234,7 +232,8 @@ def fetch_po_list(
                     'venaddress2,venaddr2,'
                     'venzip,venpostalcode,'
                     'vencity,'
-                    'vencountry,vennation,'
+                    'venstate,venprovince,'
+                    # vencountry/vennation 不抓（供应商国家不拉）
                     'vencontact,'
                     'venphone,'
                     'venemail,cxpoemail,'
@@ -243,12 +242,10 @@ def fetch_po_list(
                     'billtoaddress2,billtoaddr2,'
                     'billtocity,'
                     'billtozip,billtopostalcode,'
-                    'billtocountry,'
-                    'billtoattn,billtocontact,'
-                    'billtophone,'
-                    'billtoemail,contactemail,'
-                    'shiptoattn,shiptocontact,shiptocomp,'
-                    'buyercode,custcode,ourreference'
+                    'billtocountry'
+                    # billtoattn/billtocontact/billtophone/billtoemail/contactemail 不抓
+                    # shiptoattn/shiptocontact/shiptocomp 不抓（接收人不抓）
+                    # buyercode/custcode/ourreference 不填（斯堪尼亚客户代码不填）
                 ),
                 'oslc.pageSize': page_size,
                 '_dropnulls': 0,
