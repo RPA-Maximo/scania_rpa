@@ -8,6 +8,9 @@ LLM 提示：处理浏览器连接和页面查找
   无需预先启动调试端口（9223）。
   Cookie 持久化存储在 USER_DATA_DIR，首次登录后后续无需重新登录。
 """
+import asyncio
+import os
+import subprocess
 import sys
 from typing import Tuple
 from playwright.async_api import async_playwright, BrowserContext, Page, Frame
@@ -23,6 +26,39 @@ from config.browser import (
     MAXIMO_SHELL_URL,
     MAXIMO_LOGIN_URL,
 )
+
+
+def _kill_edge_using_profile(user_data_dir: str) -> int:
+    """
+    杀掉正在使用指定 Profile 目录的 Edge 进程。
+    通过 wmic 查找命令行中包含该目录的 msedge.exe 进程并强制结束。
+    返回被杀掉的进程数量。
+    """
+    if sys.platform != 'win32':
+        return 0
+
+    killed = 0
+    try:
+        result = subprocess.run(
+            ['wmic', 'process', 'where', 'name="msedge.exe"',
+             'get', 'ProcessId,CommandLine'],
+            capture_output=True, timeout=10,
+            encoding='utf-8', errors='replace',
+        )
+        profile_lower = user_data_dir.lower()
+        for line in result.stdout.splitlines():
+            if profile_lower in line.lower():
+                # PID 是该行最后一个数字 token
+                parts = line.strip().split()
+                if parts and parts[-1].isdigit():
+                    subprocess.run(
+                        ['taskkill', '/F', '/PID', parts[-1]],
+                        capture_output=True, timeout=5,
+                    )
+                    killed += 1
+    except Exception:
+        pass
+    return killed
 
 
 async def connect_to_browser(
@@ -78,29 +114,48 @@ async def connect_to_browser(
         # Chrome 或其他 Chromium 浏览器：直接指定路径
         launch_kwargs['executable_path'] = BROWSER_PATH
 
+    def _is_profile_in_use(err: str) -> bool:
+        return (
+            'user data directory is already in use' in err.lower()
+            or ('target page' in err.lower() and 'closed' in err.lower())
+        )
+
     try:
         context = await p.chromium.launch_persistent_context(**launch_kwargs)
-    except Exception as e:
-        await p.stop()
-        err = str(e)
-        # 用户数据目录被占用（另一个 Edge 进程正在使用该 Profile）
-        if 'user data directory is already in use' in err.lower() or (
-            'target page' in err.lower() and 'closed' in err.lower()
-        ):
+    except Exception as first_err:
+        first_msg = str(first_err)
+        if _is_profile_in_use(first_msg):
+            # Profile 被旧进程占用 → 自动清理后重试一次
+            killed = _kill_edge_using_profile(USER_DATA_DIR)
+            if killed:
+                print(f"  已关闭 {killed} 个占用 Profile 的 Edge 进程，正在重试...")
+                await asyncio.sleep(2)
+                try:
+                    context = await p.chromium.launch_persistent_context(**launch_kwargs)
+                except Exception as retry_err:
+                    await p.stop()
+                    raise Exception(
+                        f"无法启动浏览器（重试仍失败）: {retry_err}\n\n"
+                        "请手动关闭所有 Edge 窗口后重新运行。"
+                    )
+            else:
+                await p.stop()
+                raise Exception(
+                    "用户数据目录已被另一个 Edge 进程占用，且自动清理失败，请：\n"
+                    "  1. 关闭所有打开的 Edge 浏览器窗口\n"
+                    "  2. 或在任务管理器中结束所有 msedge.exe 进程\n"
+                    f"  3. 重新运行此脚本\n\n"
+                    f"  数据目录: {USER_DATA_DIR}"
+                )
+        else:
+            await p.stop()
             raise Exception(
-                "用户数据目录已被另一个 Edge 进程占用，请：\n"
-                "  1. 关闭所有打开的 Edge 浏览器窗口\n"
-                "  2. 或在任务管理器中结束所有 msedge.exe 进程\n"
-                f"  3. 重新运行此脚本\n\n"
-                f"  数据目录: {USER_DATA_DIR}"
+                f"无法启动浏览器: {first_err}\n\n"
+                "请检查：\n"
+                "  1. Edge 或 Chrome 浏览器已安装\n"
+                "  2. 没有其他进程占用相同的用户数据目录\n"
+                f"  用户数据目录: {USER_DATA_DIR}"
             )
-        raise Exception(
-            f"无法启动浏览器: {e}\n\n"
-            "请检查：\n"
-            "  1. Edge 或 Chrome 浏览器已安装\n"
-            "  2. 没有其他进程占用相同的用户数据目录\n"
-            f"  用户数据目录: {USER_DATA_DIR}"
-        )
 
     # 查找已打开的 Maximo 页面，或新开一个
     maximo_page = None
