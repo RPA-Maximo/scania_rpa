@@ -88,11 +88,6 @@ def map_line_data(
 
         result[db_field] = value
 
-    # 尺寸/规格：newitemdesc 仅在 free-text 行有值，catalog 物料行为 NULL；
-    # 此时回退使用 description（物料名称，通常含规格信息）
-    if not result.get('size_info'):
-        result['size_info'] = result.get('sku_names') or ''
-
     # 货币：优先取行级 currency，fallback 到 PO 头 currencycode
     result['currency'] = (
         line_data.get('currency') or line_data.get('currencycode') or header_currency or None

@@ -291,3 +291,76 @@ async def export_po_excel(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+@router.get("/debug/poline/{po_number}", summary="诊断：查看指定PO的原始poline字段")
+async def debug_poline_fields(po_number: str):
+    """
+    从 Maximo 实时抓取指定采购订单，返回原始 poline 字段列表。
+
+    用于诊断 `newitemdesc`（尺寸）、`itemnum`（物料编号）、`orderqty`（数量）
+    等字段是否被 OSLC API 正确返回。
+
+    **使用方法：**
+    - 填入一个已知有数据的 PO 号（如 `CN4300`）
+    - 查看返回结果中 poline 每行实际包含的字段和值
+    - 若 `newitemdesc` 字段不在返回结果中，说明 Maximo OSLC 资源未配置该字段
+    """
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    from src.fetcher.po_fetcher import fetch_po_by_number
+
+    loop = asyncio.get_event_loop()
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        po_data = await loop.run_in_executor(
+            executor, lambda: fetch_po_by_number(po_number, save_to_file=False)
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"抓取 Maximo 数据失败: {e}")
+    finally:
+        executor.shutdown(wait=False)
+
+    if not po_data:
+        raise HTTPException(status_code=404, detail=f"未找到 PO: {po_number}（可能认证过期或不存在）")
+
+    poline = po_data.get('poline', [])
+    if not poline:
+        return {
+            'po_number': po_number,
+            'poline_count': 0,
+            'message': '该PO无明细行',
+        }
+
+    # 返回前3行的所有字段（供诊断用）
+    sample_lines = []
+    for line in poline[:3]:
+        sample_lines.append({
+            'all_keys': sorted(line.keys()),
+            'itemnum':      line.get('itemnum'),
+            'description':  line.get('description'),
+            'catalogcode':  line.get('catalogcode'),
+            'newitemdesc':  line.get('newitemdesc'),   # 尺寸/质量
+            'orderqty':     line.get('orderqty'),
+            'orderunit':    line.get('orderunit'),
+            'location':     line.get('location'),
+            'storeloc':     line.get('storeloc'),
+            'linetype':     line.get('linetype'),
+        })
+
+    return {
+        'po_number': po_number,
+        'poline_count': len(poline),
+        'sample_lines': sample_lines,
+        'diagnosis': {
+            'newitemdesc_present': any(
+                'newitemdesc' in line for line in poline[:10]
+            ),
+            'newitemdesc_has_value': any(
+                line.get('newitemdesc') for line in poline[:10]
+            ),
+            'itemnum_present': any(
+                'itemnum' in line for line in poline[:10]
+            ),
+        },
+    }
