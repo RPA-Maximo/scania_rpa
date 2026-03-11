@@ -49,7 +49,7 @@ def _parse_header(raw: Dict) -> Dict:
         "usage_type":     raw.get("invuselinetype") or "ISSUE",
         "warehouse":      raw.get("storeloc") or "",
         "site":           raw.get("siteid") or "",
-        "target_address": raw.get("siteid") or "",        # 目标地址暂用地点，后续客户补充
+        "target_address": raw.get("chargeto") or "",      # 目标地址 = 发放目标（chargeto，如WYAVW6）
         "required_date":  _safe_date(raw.get("requireddate")),
         "status":         raw.get("status") or "",
         "cost_center":    raw.get("costcenter") or "",    # 成本中心
