@@ -55,21 +55,45 @@ async def connect_to_browser(
     """
     p = await async_playwright().start()
 
-    # 启动参数
+    # 判断是否为 Microsoft Edge
+    _is_edge = BROWSER_PATH and 'msedge' in BROWSER_PATH.lower()
+
+    # 基础启动参数
     launch_kwargs = dict(
         user_data_dir=USER_DATA_DIR,
         headless=False,
-        args=['--start-maximized'],
         no_viewport=True,
+        args=['--start-maximized'],
     )
-    # 如果找到 Edge/Chrome 可执行文件，指定使用它
-    if BROWSER_PATH:
+
+    if _is_edge:
+        # 使用 channel='msedge' 让 Playwright 以 Edge 原生方式启动，
+        # 避免 executable_path 模式下附加的 Chromium 独有标志
+        # （如 --disable-extensions、--enable-automation）在企业 Edge 中引发崩溃
+        launch_kwargs['channel'] = 'msedge'
+        # 企业环境中 Edge 的 Group Policy 可能强制加载扩展，
+        # 移除 --disable-extensions 防止策略冲突导致立即退出
+        launch_kwargs['ignore_default_args'] = ['--disable-extensions']
+    elif BROWSER_PATH:
+        # Chrome 或其他 Chromium 浏览器：直接指定路径
         launch_kwargs['executable_path'] = BROWSER_PATH
 
     try:
         context = await p.chromium.launch_persistent_context(**launch_kwargs)
     except Exception as e:
         await p.stop()
+        err = str(e)
+        # 用户数据目录被占用（另一个 Edge 进程正在使用该 Profile）
+        if 'user data directory is already in use' in err.lower() or (
+            'target page' in err.lower() and 'closed' in err.lower()
+        ):
+            raise Exception(
+                "用户数据目录已被另一个 Edge 进程占用，请：\n"
+                "  1. 关闭所有打开的 Edge 浏览器窗口\n"
+                "  2. 或在任务管理器中结束所有 msedge.exe 进程\n"
+                f"  3. 重新运行此脚本\n\n"
+                f"  数据目录: {USER_DATA_DIR}"
+            )
         raise Exception(
             f"无法启动浏览器: {e}\n\n"
             "请检查：\n"
