@@ -13,7 +13,7 @@ if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 
-async def connect_to_browser(cdp_url: str = "http://localhost:9223") -> Tuple:
+async def connect_to_browser(cdp_url: str = "https://main.manage.scania-acc.suite.maximo.com/maximo/oslc/graphite/manage-shell") -> Tuple:
     """
     连接到已启动的浏览器并找到 Maximo 页面
     
