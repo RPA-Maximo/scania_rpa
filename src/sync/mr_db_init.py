@@ -103,6 +103,9 @@ def init_mr_tables(conn):
                  "VARCHAR(200) NULL COMMENT '发放目标(如WYAVW6)'")
         _add_col(cursor, 'mr_detail', 'cost_center',
                  "VARCHAR(100) NULL COMMENT '成本中心'")
+        # 商品组（化学品识别：39000000=化学品，需特殊处理）
+        _add_col(cursor, 'mr_detail', 'commodity_group',
+                 "VARCHAR(100) NULL COMMENT '商品组(39000000=化学品)'")
         # 预留相关字段（来自 添加/修改预留项目 截图）
         _add_col(cursor, 'mr_detail', 'reserve_num',
                  "VARCHAR(50) NULL COMMENT '预留号(如24948819)'")
