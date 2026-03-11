@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from typing import List
 
 from src.sync.po_sync_service import po_sync_service, po_sync_scheduler
 from src.utils.db import get_connection
@@ -291,6 +292,76 @@ async def export_po_excel(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+class ResyncRequest(BaseModel):
+    po_numbers: List[str] = Field(
+        ...,
+        description="要强制重同步的 PO 号列表，如 ['CN4300', 'CN5044']",
+        min_items=1,
+    )
+
+
+@router.post("/resync", summary="强制重新同步指定PO（修复历史缺失字段）")
+async def resync_specific_pos(request: ResyncRequest):
+    """
+    对指定 PO 号执行**强制重同步**：先删除 WMS 中已有记录，再从 Maximo 重新拉取写入。
+
+    **适用场景：**
+    - 字段结构变更后（新增 item_code / model_num / size_info / target_container），
+      修复在变更前已同步的历史数据
+    - 某个 PO 数据有误，需要覆盖更新
+
+    **注意：** 同步期间该 PO 的数据会短暂不可见（删后再插）。
+    """
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    loop = asyncio.get_event_loop()
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        result = await loop.run_in_executor(
+            executor, lambda: po_sync_service.resync_pos(request.po_numbers)
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"重同步执行异常: {e}")
+    finally:
+        executor.shutdown(wait=False)
+
+    if not result.get('success') and not result.get('skipped'):
+        raise HTTPException(status_code=500, detail=result.get('message', '重同步失败'))
+    return result
+
+
+@router.post("/resync-all", summary="强制重新同步数据库中所有PO（批量修复）")
+async def resync_all_pos():
+    """
+    将数据库中**所有** PO 从 Maximo 重新拉取并覆盖写入。
+
+    **适用场景：** 字段结构变更后，批量修复所有历史记录中的缺失字段。
+
+    **警告：** 如果 PO 数量较多（数百条以上），此操作耗时较长，请耐心等待。
+    建议先用 `/resync` 针对少量 PO 测试验证，确认正常后再执行全量重同步。
+
+    请求超时设置为 10 分钟。
+    """
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    loop = asyncio.get_event_loop()
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        result = await loop.run_in_executor(
+            executor, po_sync_service.resync_all_existing
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"全量重同步异常: {e}")
+    finally:
+        executor.shutdown(wait=False)
+
+    if not result.get('success') and not result.get('skipped'):
+        raise HTTPException(status_code=500, detail=result.get('message', '重同步失败'))
+    return result
 
 
 @router.get("/debug/poline/{po_number}", summary="诊断：查看指定PO的原始poline字段")
