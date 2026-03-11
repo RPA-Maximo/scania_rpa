@@ -15,12 +15,25 @@ from src.utils.mapper import PO_HEADER_MAPPING, VENDOR_FIELD_CANDIDATES, BILLTO_
 
 
 def _first_nonempty(data: dict, keys: list) -> str:
-    """从 data 中按 keys 列表顺序取第一个非空值"""
+    """从 data 中按 keys 列表顺序取第一个非空值，始终返回字符串"""
     for k in keys:
         v = data.get(k)
-        if v and str(v).strip():
+        if v is not None and str(v).strip():
             return str(v).strip()
     return ''
+
+
+def _safe_phone(value: str) -> Optional[str]:
+    """
+    电话号码安全处理：
+    - 保留 + 前缀（避免被数值化后丢失）
+    - 去除首尾空格
+    - 空值返回 None
+    """
+    if not value:
+        return None
+    s = str(value).strip()
+    return s if s else None
 
 
 def get_supplier_info(cursor, vendor_code: str) -> Tuple[Optional[int], Optional[str]]:
@@ -107,17 +120,17 @@ def map_header_data(cursor, po_data: Dict) -> Dict:
     result['supplier_state']     = _first_nonempty(po_data, vc['supplier_state']) or None
     # supplier_country 不抓（供应商国家不拉）
     result['supplier_contact']   = _first_nonempty(po_data, vc['supplier_contact']) or None
-    result['supplier_phone']     = _first_nonempty(po_data, vc['supplier_phone']) or None
+    result['supplier_phone']     = _safe_phone(_first_nonempty(po_data, vc['supplier_phone']))
     result['supplier_email']     = _first_nonempty(po_data, vc['supplier_email']) or None
 
     # ── 收款方信息（billto）+ 内部买方信息 ────────────────────────────────
     bc = BILLTO_FIELD_CANDIDATES
     result['company_name'] = _first_nonempty(po_data, bc['company_name']) or None
 
-    # 街道地址：合并 address1 和 address2
+    # 街道地址：合并 address1 + address2（address2 为空时不加分隔符）
     addr1 = _first_nonempty(po_data, bc['street_address_1'])
     addr2 = _first_nonempty(po_data, bc['street_address_2'])
-    result['street_address'] = ' '.join(filter(None, [addr1, addr2])) or None
+    result['street_address'] = ', '.join(filter(None, [addr1, addr2])) or None
 
     result['postal_code']    = _first_nonempty(po_data, bc['postal_code']) or None
     result['city']           = _first_nonempty(po_data, bc['city']) or None

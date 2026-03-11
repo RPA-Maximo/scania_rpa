@@ -1,6 +1,12 @@
 """
 数据库表结构初始化
 安全地为 purchase_order 和 purchase_order_bd 添加新字段（如已存在则跳过）
+
+字段取舍依据（见字段映射表）：
+  - 供应商国家      → 不抓（供应商国家不拉）
+  - 斯堪尼亚客户代码 → 不填
+  - 联系人/联系电话/电子邮件/接收人 → 不抓默认表信息
+  以上字段不在此处建列；历史数据库中若已存在这些列，保留为 NULL 即可。
 """
 import sys
 from pathlib import Path
@@ -24,9 +30,19 @@ def _add_column_if_not_exists(cursor, table: str, column: str, definition: str):
 
 def ensure_po_columns(cursor):
     """
-    确保 purchase_order 主表有采购订单主子表明细所需的全部字段
+    确保 purchase_order 主表和 purchase_order_bd 子表拥有字段映射所需的全部列。
+
+    主表字段（必须抓取）：
+      供应商：vendor_code / supplier_name / supplier_address / supplier_address2 /
+              supplier_zip / supplier_city / supplier_state /
+              supplier_contact / supplier_phone / supplier_email
+      收货方：company_name / street_address / postal_code / city / country
+
+    子表字段：
+      item_code / model_num / size_info / discount_pct / currency / target_container
     """
-    # ── purchase_order 主表新增字段 ─────────────────────────────────────
+
+    # ── purchase_order 主表 ──────────────────────────────────────────────
 
     # 供应商信息
     _add_column_if_not_exists(cursor, 'purchase_order', 'vendor_code',
@@ -41,38 +57,29 @@ def ensure_po_columns(cursor):
                               "VARCHAR(100) NULL COMMENT '供应商城市'")
     _add_column_if_not_exists(cursor, 'purchase_order', 'supplier_state',
                               "VARCHAR(100) NULL COMMENT '供应商省/区'")
-    _add_column_if_not_exists(cursor, 'purchase_order', 'supplier_country',
-                              "VARCHAR(100) NULL COMMENT '供应商国家'")
+    # supplier_country → 不抓，不建列
     _add_column_if_not_exists(cursor, 'purchase_order', 'supplier_contact',
                               "VARCHAR(100) NULL COMMENT '供应商联系人'")
     _add_column_if_not_exists(cursor, 'purchase_order', 'supplier_phone',
-                              "VARCHAR(50) NULL COMMENT '供应商联系电话'")
+                              "VARCHAR(50) NULL COMMENT '供应商联系电话（含区号，如 +86...）'")
     _add_column_if_not_exists(cursor, 'purchase_order', 'supplier_email',
                               "VARCHAR(200) NULL COMMENT '供应商电子邮件'")
 
-    # 收货方信息
-    _add_column_if_not_exists(cursor, 'purchase_order', 'scania_customer_code',
-                              "VARCHAR(50) NULL COMMENT '斯堪尼亚客户代码'")
+    # 收货方信息（不填/不抓的字段不建列）
+    # scania_customer_code → 不填，不建列
     _add_column_if_not_exists(cursor, 'purchase_order', 'company_name',
                               "VARCHAR(200) NULL COMMENT '公司名称'")
     _add_column_if_not_exists(cursor, 'purchase_order', 'street_address',
-                              "VARCHAR(500) NULL COMMENT '街道地址'")
+                              "VARCHAR(500) NULL COMMENT '街道地址（address1, address2 合并）'")
     _add_column_if_not_exists(cursor, 'purchase_order', 'postal_code',
                               "VARCHAR(20) NULL COMMENT '邮政编码'")
     _add_column_if_not_exists(cursor, 'purchase_order', 'city',
                               "VARCHAR(100) NULL COMMENT '城市'")
     _add_column_if_not_exists(cursor, 'purchase_order', 'country',
                               "VARCHAR(100) NULL COMMENT '国家'")
-    _add_column_if_not_exists(cursor, 'purchase_order', 'contact_person',
-                              "VARCHAR(100) NULL COMMENT '联系人'")
-    _add_column_if_not_exists(cursor, 'purchase_order', 'contact_phone',
-                              "VARCHAR(50) NULL COMMENT '联系电话'")
-    _add_column_if_not_exists(cursor, 'purchase_order', 'contact_email',
-                              "VARCHAR(200) NULL COMMENT '电子邮件'")
-    _add_column_if_not_exists(cursor, 'purchase_order', 'receiver',
-                              "VARCHAR(100) NULL COMMENT '接收人'")
+    # contact_person / contact_phone / contact_email / receiver → 不抓，不建列
 
-    # ── purchase_order_bd 子表新增字段 ─────────────────────────────────
+    # ── purchase_order_bd 子表 ──────────────────────────────────────────
 
     _add_column_if_not_exists(cursor, 'purchase_order_bd', 'item_code',
                               "VARCHAR(50) NULL COMMENT '物料编号（原始）'")
