@@ -367,15 +367,14 @@ async def resync_all_pos():
 @router.get("/debug/poline/{po_number}", summary="诊断：查看指定PO的原始poline字段")
 async def debug_poline_fields(po_number: str):
     """
-    从 Maximo 实时抓取指定采购订单，返回原始 poline 字段列表。
-
-    用于诊断 `newitemdesc`（尺寸）、`itemnum`（物料编号）、`orderqty`（数量）
-    等字段是否被 OSLC API 正确返回。
+    从 Maximo 实时抓取指定采购订单，扫描**全部** poline 行，
+    汇报哪些字段有实际值（区分"字段缺失"和"字段存在但值为空"）。
 
     **使用方法：**
-    - 填入一个已知有数据的 PO 号（如 `CN4300`）
-    - 查看返回结果中 poline 每行实际包含的字段和值
-    - 若 `newitemdesc` 字段不在返回结果中，说明 Maximo OSLC 资源未配置该字段
+    - 填入一个已知有尺寸/型号数据的 PO 号（如 `CN5074`）
+    - 查看 `fields_with_values` — 在所有行中出现过非空值的字段
+    - 若 `newitemdesc` 不在 `fields_with_values` 里，说明该字段在 Maximo 里就是空的
+    - 若 `newitemdesc` 完全不在 `all_fields_seen` 里，说明 OSLC 资源未配置该字段
     """
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
@@ -397,41 +396,62 @@ async def debug_poline_fields(po_number: str):
 
     poline = po_data.get('poline', [])
     if not poline:
-        return {
-            'po_number': po_number,
-            'poline_count': 0,
-            'message': '该PO无明细行',
-        }
+        return {'po_number': po_number, 'poline_count': 0, 'message': '该PO无明细行'}
 
-    # 返回前3行的所有字段（供诊断用）
+    # 扫描全部行，统计字段出现情况
+    all_fields_seen: set = set()      # 在任意行出现的字段名（含 null）
+    fields_with_values: set = set()   # 在任意行有非空值的字段名
+
+    for line in poline:
+        all_fields_seen.update(line.keys())
+        for k, v in line.items():
+            if v is not None and v != '':
+                fields_with_values.add(k)
+
+    # 找3条有 newitemdesc 或 catalogcode 值的样本行
+    target_fields = ('newitemdesc', 'catalogcode')
     sample_lines = []
-    for line in poline[:3]:
-        sample_lines.append({
-            'all_keys': sorted(line.keys()),
-            'itemnum':      line.get('itemnum'),
-            'description':  line.get('description'),
-            'catalogcode':  line.get('catalogcode'),
-            'newitemdesc':  line.get('newitemdesc'),   # 尺寸/质量
-            'orderqty':     line.get('orderqty'),
-            'orderunit':    line.get('orderunit'),
-            'location':     line.get('location'),
-            'storeloc':     line.get('storeloc'),
-            'linetype':     line.get('linetype'),
-        })
+    for line in poline:
+        if any(line.get(f) for f in target_fields):
+            sample_lines.append({
+                'itemnum':     line.get('itemnum'),
+                'description': line.get('description'),
+                'catalogcode': line.get('catalogcode'),
+                'newitemdesc': line.get('newitemdesc'),
+                'location':    line.get('location'),
+                'storeloc':    line.get('storeloc'),
+                'linetype':    line.get('linetype'),
+            })
+        if len(sample_lines) >= 3:
+            break
 
+    # 如果没有找到有值的行，取前3行作为样本
+    if not sample_lines:
+        for line in poline[:3]:
+            sample_lines.append({
+                'all_keys':    sorted(line.keys()),
+                'itemnum':     line.get('itemnum'),
+                'description': line.get('description'),
+                'catalogcode': line.get('catalogcode'),
+                'newitemdesc': line.get('newitemdesc'),
+                'location':    line.get('location'),
+                'storeloc':    line.get('storeloc'),
+                'linetype':    line.get('linetype'),
+            })
+
+    KEY_FIELDS = ['itemnum', 'catalogcode', 'newitemdesc', 'location',
+                  'storeloc', 'orderqty', 'orderunit', 'description']
     return {
-        'po_number': po_number,
-        'poline_count': len(poline),
-        'sample_lines': sample_lines,
-        'diagnosis': {
-            'newitemdesc_present': any(
-                'newitemdesc' in line for line in poline[:10]
-            ),
-            'newitemdesc_has_value': any(
-                line.get('newitemdesc') for line in poline[:10]
-            ),
-            'itemnum_present': any(
-                'itemnum' in line for line in poline[:10]
-            ),
+        'po_number':        po_number,
+        'poline_count':     len(poline),
+        'all_fields_seen':  sorted(all_fields_seen),
+        'fields_with_values': sorted(fields_with_values),
+        'key_field_status': {
+            f: {
+                'in_oslc':   f in all_fields_seen,
+                'has_value': f in fields_with_values,
+            }
+            for f in KEY_FIELDS
         },
+        'sample_lines_with_data': sample_lines,
     }
