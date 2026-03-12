@@ -239,7 +239,7 @@ class KeepaliveManager:
                 [sys.executable, str(worker_script)],
                 capture_output=True,
                 text=True,
-                timeout=45,   # 45s 超时（JS fetch 20s + Playwright 启动/CDP ~15s + 余量）
+                timeout=30,   # 30s 超时（whoami fetch 10s + Playwright 启动/CDP ~15s + 余量）
                 cwd=str(PROJECT_ROOT)
             )
 
@@ -297,14 +297,14 @@ class KeepaliveManager:
             self.last_keepalive_result = {
                 'success': False,
                 'reason': 'timeout',
-                'message': '保活脚本执行超时 (>45s)',
+                'message': '保活脚本执行超时 (>30s)',
                 'po_count': 0
             }
             self.last_keepalive_time = time.time()
             ka_logger.warning(
                 f"KEEPALIVE #{count} | ❌ TIMEOUT | "
                 f"会话已持续: {duration_str} | "
-                f"保活脚本超时 (>45s)"
+                f"保活脚本超时 (>30s)"
             )
 
         except Exception as e:

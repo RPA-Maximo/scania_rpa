@@ -21,9 +21,10 @@ if sys.platform == 'win32':
 from rpa.browser import connect_to_browser
 
 
-# 轻量保活请求：只取 1 条 PO，仅验证 session 是否有效
-_PING_URL = '/maximo/oslc/os/MXAPIPO?oslc.pageSize=1&_dropnulls=1'
-_FETCH_TIMEOUT_MS = 20000   # JS fetch 超时 20s（Maximo API 响应较慢时的保护）
+# 轻量保活请求：whoami 只返回当前用户信息，不走数据库，响应极快（<1s）
+# 备用：/maximo/oslc/os（对象结构元数据，同样无 DB 查询）
+_PING_URL = '/maximo/oslc/whoami'
+_FETCH_TIMEOUT_MS = 10000   # JS fetch 超时 10s（whoami 应在 1s 内响应）
 
 
 async def keepalive_action():
@@ -51,7 +52,7 @@ async def keepalive_action():
             }
 
         # 在浏览器页内发 fetch，same-origin 自动带 cookie，无需额外认证
-        # AbortController 限时 20s，避免 Maximo 响应慢导致 subprocess 超时
+        # AbortController 限时 10s，whoami 端点无 DB 查询应极速响应
         print(f"发送保活 ping: {_PING_URL}", file=sys.stderr)
         fetch_result = await maximo_page.evaluate(f"""
             () => {{
@@ -89,7 +90,7 @@ async def keepalive_action():
             return {
                 'success': False,
                 'reason': reason,
-                'message': f'fetch {"超时(>20s)" if reason == "fetch_timeout" else "异常"}: {fetch_error}',
+                'message': f'fetch {"超时(>10s)" if reason == "fetch_timeout" else "异常"}: {fetch_error}',
                 'http_status': 0,
             }
         else:
