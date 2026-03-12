@@ -20,6 +20,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.fetcher.po_fetcher import fetch_po_list
 from src.fetcher.item_fetcher import fetch_item_specs
+from src.fetcher.vendor_fetcher import fetch_vendor_details
 from src.sync.db_init import init_schema
 from src.sync.material import validate_and_sync_materials
 from src.sync.po_header import batch_map_headers, batch_insert_headers, check_po_exists
@@ -188,6 +189,22 @@ class POSyncService:
                     seen.append(num)
         return seen
 
+    @staticmethod
+    def _collect_company_codes(po_list: list) -> list:
+        """
+        从 PO 列表中收集所有不重复的公司代码（供应商 + 收款方）。
+        用于 fetch_vendor_details 二次查询，与 _collect_item_nums 作用一致。
+        """
+        seen = []
+        dedup = set()
+        for po in po_list:
+            for field in ('vendor', 'billto'):
+                code = po.get(field)
+                if code and code not in dedup:
+                    dedup.add(code)
+                    seen.append(code)
+        return seen
+
     def _ensure_schema(self, conn):
         """首次运行时初始化数据库字段（只执行一次）"""
         if self._schema_initialized:
@@ -279,12 +296,17 @@ class POSyncService:
             if material_map is None:
                 material_map = {}
 
-            # 步骤 3b：从 MXAPIITEM 批量查物料规格（cxmfprodnum → model_num）
+            # 步骤 3b：从 MXAPIITEM 批量查物料规格（cxtypedsg → model_num）
             item_nums = self._collect_item_nums(new_pos)
             item_spec_map = fetch_item_specs(item_nums) if item_nums else {}
 
+            # 步骤 3c：从 MXAPICOMPANY 批量查供应商/收款方详情
+            # （与 fetch_item_specs 模式相同：PO 本身字段为空时做 fallback 填充）
+            company_codes = self._collect_company_codes(new_pos)
+            vendor_detail_map = fetch_vendor_details(company_codes) if company_codes else {}
+
             # 步骤 4：清洗数据（先清洗，后入库）
-            cleaned_headers, pre_header_id_map = batch_map_headers(cursor, new_pos)
+            cleaned_headers, pre_header_id_map = batch_map_headers(cursor, new_pos, vendor_detail_map)
             cleaned_details = batch_map_details(cursor, new_pos, pre_header_id_map, material_map, item_spec_map)
 
             # 步骤 5：插入主表（使用清洗后数据）
@@ -378,7 +400,10 @@ class POSyncService:
             item_nums = self._collect_item_nums(po_list)
             item_spec_map = fetch_item_specs(item_nums) if item_nums else {}
 
-            cleaned_headers, pre_header_id_map = batch_map_headers(cursor, po_list)
+            company_codes = self._collect_company_codes(po_list)
+            vendor_detail_map = fetch_vendor_details(company_codes) if company_codes else {}
+
+            cleaned_headers, pre_header_id_map = batch_map_headers(cursor, po_list, vendor_detail_map)
             cleaned_details = batch_map_details(cursor, po_list, pre_header_id_map, material_map, item_spec_map)
 
             # update_existing=True：删旧记录，重新插入

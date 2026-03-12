@@ -64,14 +64,16 @@ def get_supplier_info(cursor, vendor_code: str) -> Tuple[Optional[int], Optional
         return None, None
 
 
-def map_header_data(cursor, po_data: Dict) -> Dict:
+def map_header_data(cursor, po_data: Dict, vendor_detail_map: Dict = None) -> Dict:
     """
     将 JSON 数据映射到数据库字段
-    
+
     Args:
-        cursor: 数据库游标
-        po_data: 采购订单 JSON 数据
-        
+        cursor:            数据库游标
+        po_data:           采购订单 JSON 数据
+        vendor_detail_map: 公司详情字典 {company_code: {name, address1, city, ...}}
+                           由 fetch_vendor_details 返回；为 None 时跳过二次填充
+
     Returns:
         dict: 映射后的数据库字段
     """
@@ -141,6 +143,61 @@ def map_header_data(cursor, po_data: Dict) -> Dict:
     result['receiver']       = _first_nonempty(po_data, bc['receiver']) or None
     # scania_customer_code 无对应 Maximo 字段，保持空值
 
+    # ── 二次填充：从 MXAPICOMPANY 查询结果补充空字段 ─────────────────────────
+    # 与 model_num/size_info 的子表修复逻辑完全一致：
+    #   MXAPIPO 本身的 ven*/billto* 字段若为空（Maximo 权限限制），
+    #   从 fetch_vendor_details 返回的公司详情字典中读取并回填。
+    if vendor_detail_map:
+        vendor_code = po_data.get('vendor')
+        billto_code = po_data.get('billto')
+
+        # 供应商字段 fallback
+        if vendor_code:
+            vd = vendor_detail_map.get(vendor_code, {})
+            if not result.get('supplier_name'):
+                result['supplier_name']   = vd.get('name')
+            if not result.get('vendor_code'):
+                result['vendor_code']     = vendor_code
+            if not result.get('supplier_address'):
+                result['supplier_address'] = vd.get('address1')
+            if not result.get('supplier_address2'):
+                result['supplier_address2'] = vd.get('address2')
+            if not result.get('supplier_zip'):
+                result['supplier_zip']    = vd.get('zip')
+            if not result.get('supplier_city'):
+                result['supplier_city']   = vd.get('city')
+            if not result.get('supplier_state'):
+                result['supplier_state']  = vd.get('stateprovince')
+            if not result.get('supplier_contact'):
+                result['supplier_contact'] = vd.get('contact')
+            if not result.get('supplier_phone'):
+                result['supplier_phone']  = _safe_phone(vd.get('phone1') or '')
+            if not result.get('supplier_email'):
+                result['supplier_email']  = vd.get('email1')
+
+        # 收款方（billto）字段 fallback
+        if billto_code:
+            bd = vendor_detail_map.get(billto_code, {})
+            if not result.get('company_name'):
+                result['company_name']    = bd.get('name')
+            if not result.get('street_address'):
+                addr1 = bd.get('address1') or ''
+                addr2 = bd.get('address2') or ''
+                merged = ', '.join(filter(None, [addr1, addr2]))
+                result['street_address']  = merged or None
+            if not result.get('postal_code'):
+                result['postal_code']     = bd.get('zip')
+            if not result.get('city'):
+                result['city']            = bd.get('city')
+            if not result.get('country'):
+                result['country']         = bd.get('country')
+            if not result.get('contact_person'):
+                result['contact_person']  = bd.get('contact')
+            if not result.get('contact_phone'):
+                result['contact_phone']   = _safe_phone(bd.get('phone1') or '')
+            if not result.get('contact_email'):
+                result['contact_email']   = bd.get('email1')
+
     return result
 
 
@@ -199,13 +256,16 @@ def insert_po_header(cursor, header_data: Dict) -> int:
 def batch_map_headers(
     cursor,
     po_list: List[Dict],
+    vendor_detail_map: Dict = None,
 ) -> Tuple[Dict[str, Dict], Dict[str, int]]:
     """
     批量清洗订单头数据（只读 DB 做查询，不写入）
 
     Args:
-        cursor: 数据库游标
-        po_list: 采购订单列表
+        cursor:            数据库游标
+        po_list:           采购订单列表
+        vendor_detail_map: 公司详情字典 {company_code: {...}}
+                           由 fetch_vendor_details 返回；为 None 时跳过二次填充
 
     Returns:
         (cleaned_map, header_id_map):
@@ -227,7 +287,7 @@ def batch_map_headers(
             failed += 1
             continue
         try:
-            header_data = map_header_data(cursor, po_data)
+            header_data = map_header_data(cursor, po_data, vendor_detail_map)
             cleaned_map[po_code] = header_data
             header_id_map[po_code] = header_data['id']
             print(f"  ✓ {po_code}")
