@@ -1364,7 +1364,100 @@ async def debug_company(company_code: str):
         'hint': (
             'result=found/found_via_retry → found_record.fields 含完整字段。'
             'probe_debug → 每个 API 的无条件样本探测详情（含 body_preview/sample_fields）。'
-            '若 sample_fields 中有记录但 found_record 仍空，查看 probe_debug 中的字段名，'
-            '找到类似 company/vendor/companynum 的 key 字段名回报给开发者。'
+            '若全部 API 返回 BMXAA0024E，说明是权限问题（不允许 READ COMPANIES/ADDRESS）。'
+            '解决方案：让 Maximo 管理员授权，或用 GET /debug/po-vendor-subresource/{po_number} 尝试子资源。'
+        ),
+    }
+
+
+@router.get("/debug/po-vendor-subresource/{po_number}",
+            summary="诊断：尝试通过MXAPIPO子资源获取供应商/收款方地址")
+async def debug_po_vendor_subresource(po_number: str):
+    """
+    尝试在 MXAPIPO 的 oslc.select 中添加 company/vendor 子资源选择，
+    看是否能绕过直接查询 COMPANIES 对象的权限限制，从 PO 关联中获取供应商名称/地址。
+
+    测试以下 select 变体：
+    - `*,company{*}` — 通过 company 关系拉取公司信息
+    - `*,vendor{*}` — 通过 vendor 关系拉取供应商信息
+    - `vendorname,venaddress1,vencity,venzip,venphone,billtocomp,billtoaddress1,billtocity` — 显式字段
+    """
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    from config import get_maximo_auth, DEFAULT_HEADERS
+    from config.settings import MAXIMO_BASE_URL, VERIFY_SSL
+    from config.settings_manager import settings_manager
+    import requests, urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    try:
+        auth = get_maximo_auth()
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=f"认证未配置: {e}")
+
+    headers_http = {
+        **DEFAULT_HEADERS,
+        'Cookie': auth['cookie'],
+        'x-csrf-token': auth['csrf_token'],
+    }
+
+    loop = asyncio.get_event_loop()
+    executor = ThreadPoolExecutor(max_workers=1)
+
+    SELECTS = [
+        ('company_subresource',  '*,company{*}'),
+        ('vendor_subresource',   '*,vendor{*}'),
+        ('billto_subresource',   '*,billto{*}'),
+        ('explicit_ven_fields',  'ponum,vendorname,venaddress1,venaddress2,vencity,venzip,venstate,venphone,venemail,vencontact'),
+        ('explicit_billto_fields', 'ponum,billtocomp,billtoname,billtoaddress1,billtoaddress2,billtocity,billtozip,billtocountry,billtocontact,billtophone,billtoemail,shiptoattn'),
+        ('lean_vendor',          'ponum,vendor,vendorname,venaddress1,vencity,venzip'),
+    ]
+
+    results = []
+    for label, select in SELECTS:
+        def _fetch(sel=select):
+            url = f"{MAXIMO_BASE_URL}/oslc/os/MXAPIPO"
+            params = {
+                'oslc.select': sel,
+                'oslc.where':  f'ponum="{po_number}"',
+                '_dropnulls':  '0',
+            }
+            return requests.get(url, headers=headers_http, params=params,
+                                verify=VERIFY_SSL, proxies=settings_manager.get_proxies(), timeout=30)
+        try:
+            resp = await loop.run_in_executor(executor, _fetch)
+            if resp.status_code == 200:
+                data = resp.json()
+                members = data.get('member') or data.get('rdfs:member') or []
+                if members:
+                    raw = members[0]
+                    record = {}
+                    for k, v in raw.items():
+                        clean = k.split(':', 1)[1] if ':' in k else k
+                        # 子资源也展开一层
+                        if isinstance(v, dict):
+                            record[clean] = {
+                                (kk.split(':', 1)[1] if ':' in kk else kk): vv
+                                for kk, vv in v.items()
+                                if not isinstance(vv, (dict, list))
+                            }
+                        elif not isinstance(v, list):
+                            record[clean] = v
+                    results.append({'select': label, 'status': 200, 'fields': record})
+                else:
+                    results.append({'select': label, 'status': 200, 'fields': {}})
+            else:
+                results.append({'select': label, 'status': resp.status_code,
+                                 'body': resp.text[:300]})
+        except Exception as e:
+            results.append({'select': label, 'error': str(e)})
+
+    return {
+        'po_number': po_number,
+        'results':   results,
+        'hint': (
+            '若某个 select 返回了 vendorname/billtocomp 等字段且有值，'
+            '说明通过该 select 可以获取供应商/收款方信息，无需单独查询 COMPANIES API。'
+            '若全部失败，则必须由 Maximo 管理员授权 COMPANIES/ADDRESS READ 权限。'
         ),
     }
