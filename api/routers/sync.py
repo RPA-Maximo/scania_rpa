@@ -468,3 +468,190 @@ async def debug_poline_fields(po_number: str):
         },
         'sample_lines_with_data': sample_lines,
     }
+
+
+@router.get("/debug/scan-fields", summary="诊断：扫描多个PO，找有指定字段值的样本")
+async def scan_po_fields(
+    fields: str = Query(
+        "catalogcode,newitemdesc",
+        description="要检查的字段名，逗号分隔，如 'catalogcode,newitemdesc,location'",
+    ),
+    max_scan: int = Query(
+        30,
+        description="最多扫描的PO数量（从数据库取最近的PO逐个检查）",
+        ge=1, le=200,
+    ),
+    max_hits: int = Query(
+        5,
+        description="找到多少个命中PO后停止",
+        ge=1, le=20,
+    ),
+):
+    """
+    从数据库取最近的 PO，逐个从 Maximo 拉取 poline，
+    找出哪些 PO 在指定字段上有实际值。
+
+    **用途：** 确认 `catalogcode` / `newitemdesc` / `location` 字段
+    在真实数据里是否存在，以及在哪些 PO 上。
+    """
+    import asyncio
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    from src.fetcher.po_fetcher import fetch_po_by_number
+
+    target_fields = [f.strip() for f in fields.split(',') if f.strip()]
+    if not target_fields:
+        raise HTTPException(status_code=400, detail="fields 参数不能为空")
+
+    # 从 DB 取最近的 PO 编号
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT code FROM purchase_order ORDER BY create_time DESC LIMIT %s",
+            (max_scan,),
+        )
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        po_codes = [r[0] for r in rows]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"查询数据库失败: {e}")
+
+    if not po_codes:
+        return {'message': '数据库中无PO记录', 'hits': []}
+
+    hits = []
+    scanned = 0
+    executor = ThreadPoolExecutor(max_workers=1)
+    loop = asyncio.get_event_loop()
+
+    for po_code in po_codes:
+        if len(hits) >= max_hits:
+            break
+        scanned += 1
+        try:
+            po_data = await loop.run_in_executor(
+                executor, lambda c=po_code: fetch_po_by_number(c, save_to_file=False)
+            )
+        except Exception:
+            continue
+
+        if not po_data:
+            continue
+
+        poline = po_data.get('poline', [])
+        for line in poline:
+            matched = {f: line.get(f) for f in target_fields if line.get(f)}
+            if matched:
+                hits.append({
+                    'po_number':  po_code,
+                    'polinenum':  line.get('polinenum'),
+                    'itemnum':    line.get('itemnum'),
+                    'description': line.get('description'),
+                    'linetype':   line.get('linetype'),
+                    'matched_fields': matched,
+                })
+                break  # 每个 PO 只取第一个命中行
+
+        time.sleep(0.3)
+
+    executor.shutdown(wait=False)
+
+    return {
+        'target_fields': target_fields,
+        'scanned_po_count': scanned,
+        'hit_po_count': len(hits),
+        'hits': hits,
+        'note': '已扫描完所有PO未找到目标字段' if not hits else '',
+    }
+
+
+@router.get("/debug/mxitem/{item_num}", summary="诊断：查询MXITEM物料主数据字段")
+async def debug_mxitem_fields(item_num: str):
+    """
+    通过 OSLC `MXITEM` 对象查询指定物料的完整字段，
+    找出型号（catalogcode / manufacturernum）、规格（newitemdesc）
+    等字段是否存在于物料主数据里。
+
+    **用途：** 当 MXAPIPO poline 中 catalogcode/newitemdesc 为空时，
+    看 MXITEM 里是否有对应数据。
+    """
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    from config import get_maximo_auth, DEFAULT_HEADERS
+    from config.settings import MAXIMO_BASE_URL, VERIFY_SSL
+    from config.settings_manager import settings_manager
+    import requests, urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    try:
+        auth = get_maximo_auth()
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=f"认证未配置: {e}")
+
+    headers = {
+        **DEFAULT_HEADERS,
+        'Cookie': auth['cookie'],
+        'x-csrf-token': auth['csrf_token'],
+    }
+    url = f"{MAXIMO_BASE_URL}/oslc/os/MXITEM"
+    params = {
+        'oslc.select': '*',
+        'oslc.where': f'itemnum="{item_num}"',
+        '_dropnulls': 0,
+    }
+
+    def _fetch():
+        import requests
+        resp = requests.get(
+            url, headers=headers, params=params,
+            verify=VERIFY_SSL,
+            proxies=settings_manager.get_proxies(),
+            timeout=60,
+        )
+        return resp
+
+    loop = asyncio.get_event_loop()
+    executor = ThreadPoolExecutor(max_workers=1)
+    try:
+        resp = await loop.run_in_executor(executor, _fetch)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"请求失败: {e}")
+    finally:
+        executor.shutdown(wait=False)
+
+    if resp.status_code == 401:
+        raise HTTPException(status_code=401, detail="认证失败（401）")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Maximo 返回 {resp.status_code}")
+
+    data = resp.json()
+    items = data.get('member') or data.get('rdfs:member') or []
+    if not items:
+        return {'item_num': item_num, 'found': False, 'message': '未找到该物料'}
+
+    # 标准化（去命名空间前缀）
+    raw = items[0]
+    clean = {(k.split(':', 1)[1] if ':' in k else k): v for k, v in raw.items()}
+
+    # 分类输出
+    fields_with_values = {k: v for k, v in clean.items() if v is not None and v != ''}
+    fields_null = [k for k, v in clean.items() if v is None or v == '']
+
+    # 重点关注的型号/规格相关字段
+    FOCUS_FIELDS = [
+        'catalogcode', 'newitemdesc', 'manufacturernum', 'modelnum',
+        'manufacturer', 'itemnum', 'description', 'itemtype',
+        'commodity', 'commoditygroup', 'itemsetid',
+    ]
+    focus = {f: clean.get(f) for f in FOCUS_FIELDS if f in clean}
+
+    return {
+        'item_num': item_num,
+        'found': True,
+        'focus_fields': focus,
+        'fields_with_values': fields_with_values,
+        'null_fields': sorted(fields_null),
+        'total_fields': len(clean),
+    }
