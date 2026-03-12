@@ -1083,5 +1083,109 @@ async def debug_po_header_raw(po_number: str):
             'maximo_vendor/maximo_billto 显示 Maximo API 返回值；'
             'db_current 显示当前数据库存储值。'
             '若 Maximo 有值但 DB 为空，执行 POST /api/sync/po/resync 重新同步该 PO。'
+            '若 Maximo 返回值也为空，使用 GET /debug/po-all-fields/{po_number} 查看全部字段。'
+        ),
+    }
+
+
+@router.get("/debug/po-all-fields/{po_number}", summary="诊断：用*查询PO全部字段，找出供应商/收款方的真实字段名")
+async def debug_po_all_fields(po_number: str):
+    """
+    用 `oslc.select=*` 拉取 PO 全部顶层字段，过滤出含有值的 ven*/billto*/company* 字段。
+
+    **用途：** 当 /debug/po-header-raw 显示 vendorname/venaddress1 等为空时，
+    用本接口查出 Maximo 实际使用的供应商/收款方字段名（可能因版本不同而异）。
+    """
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    from config import get_maximo_auth, DEFAULT_HEADERS
+    from config.settings import MAXIMO_BASE_URL, VERIFY_SSL
+    from config.settings_manager import settings_manager
+    import requests, urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    try:
+        auth = get_maximo_auth()
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=f"认证未配置: {e}")
+
+    headers_http = {
+        **DEFAULT_HEADERS,
+        'Cookie': auth['cookie'],
+        'x-csrf-token': auth['csrf_token'],
+    }
+
+    loop = asyncio.get_event_loop()
+    executor = ThreadPoolExecutor(max_workers=1)
+
+    def _fetch():
+        url = f"{MAXIMO_BASE_URL}/oslc/os/MXAPIPO"
+        params = {
+            'oslc.select': '*',
+            'oslc.where':  f'ponum="{po_number}"',
+            '_dropnulls':  '0',
+        }
+        return requests.get(
+            url, headers=headers_http, params=params,
+            verify=VERIFY_SSL, proxies=settings_manager.get_proxies(), timeout=60,
+        )
+
+    try:
+        resp = await loop.run_in_executor(executor, _fetch)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"请求失败: {e}")
+
+    if resp.status_code == 401:
+        raise HTTPException(status_code=401, detail="认证过期")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Maximo {resp.status_code}: {resp.text[:300]}")
+
+    data = resp.json()
+    members = data.get('member') or data.get('rdfs:member') or []
+    if not members:
+        raise HTTPException(status_code=404, detail=f"PO {po_number} 未找到")
+
+    # 标准化（去命名空间前缀）
+    raw = members[0]
+    po: dict = {}
+    for k, v in raw.items():
+        clean = k.split(':', 1)[1] if ':' in k else k
+        po[clean] = v
+
+    # ── 过滤出供应商/收款方相关字段（含值的）────────────────────────────
+    VENDOR_PREFIXES  = ('ven', 'vendor', 'company', 'supp')
+    BILLTO_PREFIXES  = ('billto', 'shipto', 'shiptoattn')
+    OTHER_KEYS       = ('ponum', 'description', 'status')
+
+    vendor_fields  = {}
+    billto_fields  = {}
+    other_fields   = {}
+    all_keys_nonempty = {}
+
+    for k, v in po.items():
+        if isinstance(v, (dict, list)):
+            continue  # 跳过子资源
+        lo = k.lower()
+        if any(lo.startswith(p) for p in VENDOR_PREFIXES):
+            vendor_fields[k] = v
+        elif any(lo.startswith(p) for p in BILLTO_PREFIXES):
+            billto_fields[k] = v
+        elif k in OTHER_KEYS:
+            other_fields[k] = v
+        # 收集所有有值的顶层字段（供参考）
+        if v not in (None, '', 0, False):
+            all_keys_nonempty[k] = v
+
+    return {
+        'po_number':     po_number,
+        'total_fields_returned': len(po),
+        'vendor_fields':  vendor_fields,
+        'billto_fields':  billto_fields,
+        'other_fields':   other_fields,
+        'all_nonempty_scalar_fields': all_keys_nonempty,
+        'hint': (
+            '查看 vendor_fields 找供应商名称/地址的真实字段名，'
+            '查看 billto_fields 找收款方信息的真实字段名。'
+            '将找到的字段名更新到 src/utils/mapper.py 的 VENDOR_FIELD_CANDIDATES / BILLTO_FIELD_CANDIDATES。'
         ),
     }
