@@ -130,6 +130,7 @@ def insert_po_lines(
     form_id: int,
     material_map: Dict[str, int],
     header_currency: str = None,
+    item_spec_map: Dict = None,
 ) -> Dict:
     """
     插入订单明细
@@ -183,7 +184,7 @@ def insert_po_lines(
                     print(f"    [WARN] 仓库 {warehouse_code} 在 warehouse 表中找不到ID")
         
         # 映射并插入数据
-        line_data = map_line_data(line, form_id, material_id, warehouse_id, header_currency)
+        line_data = map_line_data(line, form_id, material_id, warehouse_id, header_currency, item_spec_map)
         
         columns = ', '.join(line_data.keys())
         placeholders = ', '.join(['%s'] * len(line_data))

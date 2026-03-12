@@ -85,10 +85,6 @@ def map_header_data(cursor, po_data: Dict, vendor_detail_map: Dict = None) -> Di
     
     # 基础字段映射
     for json_field, db_field in PO_HEADER_MAPPING.items():
-        # 跳过 vendor 字段，后面单独处理
-        if json_field == 'vendor':
-            continue
-            
         value = po_data.get(json_field)
         
         # 日期时间格式化
