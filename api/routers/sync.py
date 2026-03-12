@@ -377,6 +377,122 @@ async def resync_all_pos():
     return result
 
 
+@router.get("/debug/poline-raw/{po_number}", summary="诊断：用poline{*}拉取全部字段（含cx自定义字段）")
+async def debug_poline_raw_fields(po_number: str):
+    """
+    用 `poline{*}` 查询指定 PO 的原始明细，返回第一行的**全部字段**（含 Scania 自定义 cx 字段）。
+
+    **解决的问题：** 当前 po_fetcher 明确列出了 poline 字段，可能漏掉了 Scania 自定义字段。
+    本接口绕过 po_fetcher，直接用 `poline{*}` 查询，找出型号/尺寸对应的真实字段名。
+
+    **对比 /debug/poline/{po_number}（用 po_fetcher 的固定 select）**：
+    - 本接口: `poline{*}` → 显示所有字段（目的：找缺失的 cx 字段名）
+    - 那个接口: `poline{...固定列表...}` → 显示当前已配置字段的值
+    """
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    from config import get_maximo_auth, DEFAULT_HEADERS
+    from config.settings import MAXIMO_BASE_URL, VERIFY_SSL
+    from config.settings_manager import settings_manager
+    import requests, urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    try:
+        auth = get_maximo_auth()
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=f"认证未配置: {e}")
+
+    headers = {
+        **DEFAULT_HEADERS,
+        'Cookie': auth['cookie'],
+        'x-csrf-token': auth['csrf_token'],
+    }
+
+    loop = asyncio.get_event_loop()
+    executor = ThreadPoolExecutor(max_workers=1)
+
+    def _fetch():
+        url = f"{MAXIMO_BASE_URL}/oslc/os/MXAPIPO"
+        params = {
+            'oslc.select': '*,poline{*}',
+            'oslc.where': f'ponum="{po_number}"',
+            '_dropnulls': '0',
+            'oslc.pageSize': 1,
+        }
+        return requests.get(
+            url, headers=headers, params=params,
+            verify=VERIFY_SSL,
+            proxies=settings_manager.get_proxies(),
+            timeout=120,
+        )
+
+    try:
+        resp = await loop.run_in_executor(executor, _fetch)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"请求失败: {e}")
+    finally:
+        executor.shutdown(wait=False)
+
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=resp.status_code,
+            detail=f"Maximo 返回 {resp.status_code}: {resp.text[:300]}",
+        )
+
+    data = resp.json()
+    items = data.get('member') or data.get('rdfs:member') or []
+    if not items:
+        raise HTTPException(status_code=404, detail=f"未找到 PO: {po_number}")
+
+    # 标准化（去命名空间前缀）
+    def _normalize(obj):
+        if isinstance(obj, dict):
+            return {(k.split(':', 1)[1] if ':' in k else k): _normalize(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_normalize(i) for i in obj]
+        return obj
+
+    po = _normalize(items[0])
+    poline = po.get('poline', [])
+
+    if not poline:
+        return {'po_number': po_number, 'poline_count': 0, 'message': '无明细行'}
+
+    # 取第一条明细，列出全部字段
+    first_line = poline[0]
+    all_keys = sorted(first_line.keys())
+    fields_with_values = {k: v for k, v in first_line.items() if v is not None and v != ''}
+    null_fields = [k for k, v in first_line.items() if v is None or v == '']
+
+    # 所有行里有值的字段（聚合）
+    all_line_fields_with_value: set = set()
+    for line in poline:
+        for k, v in line.items():
+            if v is not None and v != '':
+                all_line_fields_with_value.add(k)
+
+    # 找第一行有 cx 前缀的字段
+    cx_fields_in_first_line = {k: v for k, v in first_line.items() if k.lower().startswith('cx')}
+    cx_fields_with_value_any_line = sorted(
+        k for k in all_line_fields_with_value if k.lower().startswith('cx')
+    )
+
+    return {
+        'po_number': po_number,
+        'poline_count': len(poline),
+        'first_line_all_keys': all_keys,
+        'first_line_fields_with_values': fields_with_values,
+        'first_line_null_fields': sorted(null_fields),
+        'cx_fields_in_first_line': cx_fields_in_first_line,
+        'cx_fields_with_value_any_line': cx_fields_with_value_any_line,
+        'all_fields_with_value_any_line': sorted(all_line_fields_with_value),
+        'hint': (
+            '重点看 cx_fields_with_value_any_line —— 这些是所有 poline 行中有值的 Scania 自定义字段，'
+            '其中很可能包含型号/尺寸对应的真实字段名。'
+        ),
+    }
+
+
 @router.get("/debug/poline/{po_number}", summary="诊断：查看指定PO的原始poline字段")
 async def debug_poline_fields(po_number: str):
     """
