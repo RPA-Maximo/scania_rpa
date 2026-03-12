@@ -1191,20 +1191,16 @@ async def debug_po_all_fields(po_number: str):
     }
 
 
-@router.get("/debug/company/{company_code}", summary="诊断：从MXAPICOMPANY查询公司（供应商/收款方）详细信息")
-async def debug_company(
-    company_code: str,
-    api_object: str = Query("MXAPICOMPANY", description="Maximo API 对象名，如 MXAPICOMPANY / MXAPIVENDOR"),
-):
+@router.get("/debug/company/{company_code}", summary="诊断：自动扫描多个API对象，找出供应商/收款方地址接口")
+async def debug_company(company_code: str):
     """
-    查询 Maximo 公司档案 API，用于获取供应商/收款方地址信息。
+    自动遍历 Maximo 常见公司/供应商 API 对象名，找出哪个存在且含有 company_code 的记录。
 
     **用法：**
-    - `GET /debug/company/8970301` — 查询供应商 8970301 的公司信息
-    - `GET /debug/company/BILLTOCHINA` — 查询收款方 BILLTOCHINA 的公司信息
-    - `GET /debug/company/8970301?api_object=MXAPIVENDOR` — 尝试 MXAPIVENDOR
+    - `GET /debug/company/8970301` — 扫描供应商 8970301
+    - `GET /debug/company/BILLTOCHINA` — 扫描收款方 BILLTOCHINA
 
-    返回 Maximo 公司档案的全部标量字段（含名称、地址等）。
+    返回所有 API 对象的探测结果，以及第一个找到记录的完整字段列表。
     """
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
@@ -1225,61 +1221,73 @@ async def debug_company(
         'x-csrf-token': auth['csrf_token'],
     }
 
+    # 候选 API 对象名 × where 条件组合
+    CANDIDATES = [
+        # (api_object, where_clause)
+        ("MXAPIVENDOR",      f'vendor="{company_code}"'),
+        ("MXAPIVENDOR",      f'company="{company_code}"'),
+        ("MXAPIADDRESS",     f'company="{company_code}"'),
+        ("MXAPIADDRESS",     f'addresscode="{company_code}"'),
+        ("MXAPICOMPADDR",    f'company="{company_code}"'),
+        ("MXAPICO",          f'company="{company_code}"'),
+        ("MXAPICUST",        f'company="{company_code}"'),
+        ("MXAPICUSTOMER",    f'company="{company_code}"'),
+        ("OSLCCOMPANY",      f'company="{company_code}"'),
+        ("MXAPICOMPANY",     f'company="{company_code}"'),
+    ]
+
     loop = asyncio.get_event_loop()
     executor = ThreadPoolExecutor(max_workers=1)
 
-    # 尝试多种 where 条件（不同 Maximo 版本字段名不同）
-    where_attempts = [
-        f'company="{company_code}"',
-        f'vendor="{company_code}"',
-        f'companynum="{company_code}"',
-    ]
-
-    def _fetch(where_clause: str):
-        url = f"{MAXIMO_BASE_URL}/oslc/os/{api_object}"
+    def _probe(api_obj: str, where: str):
+        url = f"{MAXIMO_BASE_URL}/oslc/os/{api_obj}"
         params = {
-            'oslc.select': '*',
-            'oslc.where':  where_clause,
-            '_dropnulls':  '0',
+            'oslc.select':   '*',
+            'oslc.where':    where,
+            '_dropnulls':    '0',
             'oslc.pageSize': 1,
         }
-        return requests.get(
+        resp = requests.get(
             url, headers=headers_http, params=params,
-            verify=VERIFY_SSL, proxies=settings_manager.get_proxies(), timeout=60,
+            verify=VERIFY_SSL, proxies=settings_manager.get_proxies(), timeout=30,
         )
+        return resp
 
-    results = []
-    for where in where_attempts:
+    scan_results = []
+    found_record = None
+
+    for api_obj, where in CANDIDATES:
         try:
-            resp = await loop.run_in_executor(executor, lambda w=where: _fetch(w))
-            if resp.status_code == 200:
+            resp = await loop.run_in_executor(executor, lambda o=api_obj, w=where: _probe(o, w))
+            status = resp.status_code
+            if status == 404:
+                scan_results.append({'api': api_obj, 'where': where, 'result': 'api_not_found'})
+            elif status == 200:
                 data = resp.json()
                 members = data.get('member') or data.get('rdfs:member') or []
                 if members:
-                    raw = members[0]
                     record = {}
-                    for k, v in raw.items():
+                    for k, v in members[0].items():
                         clean = k.split(':', 1)[1] if ':' in k else k
                         if not isinstance(v, (dict, list)):
                             record[clean] = v
-                    results.append({'where': where, 'found': True, 'fields': record})
-                    break  # 找到就停止
+                    scan_results.append({'api': api_obj, 'where': where, 'result': 'found', 'field_count': len(record)})
+                    if not found_record:
+                        found_record = {'api': api_obj, 'where': where, 'fields': record}
                 else:
-                    results.append({'where': where, 'found': False, 'http_status': resp.status_code})
+                    scan_results.append({'api': api_obj, 'where': where, 'result': 'no_record'})
             else:
-                results.append({'where': where, 'found': False, 'http_status': resp.status_code,
-                                'error': resp.text[:200]})
+                scan_results.append({'api': api_obj, 'where': where, 'result': f'http_{status}'})
         except Exception as e:
-            results.append({'where': where, 'found': False, 'error': str(e)})
+            scan_results.append({'api': api_obj, 'where': where, 'result': f'error: {e}'})
 
-    found = next((r for r in results if r.get('found')), None)
     return {
-        'company_code': company_code,
-        'api_object':   api_object,
-        'attempts':     results,
-        'company_fields': found['fields'] if found else None,
+        'company_code':  company_code,
+        'scan_results':  scan_results,
+        'found_record':  found_record,
         'hint': (
-            '若 company_fields 中有名称/地址字段，说明可通过此 API 获取供应商/收款方信息。'
-            '若所有 where 条件都返回 found=false，尝试参数 api_object=MXAPIVENDOR 或 MXAPIADDRESS。'
+            'scan_results 中 result=found 的行说明该 API 存在且有此公司记录；'
+            'found_record.fields 包含完整字段（可找到名称/地址字段名）。'
+            '若全部 api_not_found/no_record，说明需要通过其他途径获取供应商/收款方信息。'
         ),
     }
