@@ -523,6 +523,8 @@ async def scan_po_fields(
 
     hits = []
     scanned = 0
+    # 保留第一个成功获取到的 PO 概况（用于验证扫描在正常工作）
+    first_po_probe = None
     executor = ThreadPoolExecutor(max_workers=1)
     loop = asyncio.get_event_loop()
 
@@ -541,6 +543,19 @@ async def scan_po_fields(
             continue
 
         poline = po_data.get('poline', [])
+
+        # 记录第一个成功 PO 的概况
+        if first_po_probe is None and poline:
+            sample_line = poline[0]
+            first_po_probe = {
+                'po_number':   po_code,
+                'poline_count': len(poline),
+                'first_line_keys': sorted(sample_line.keys()),
+                'first_line_target_values': {
+                    f: sample_line.get(f) for f in target_fields
+                },
+            }
+
         for line in poline:
             matched = {f: line.get(f) for f in target_fields if line.get(f)}
             if matched:
@@ -564,18 +579,23 @@ async def scan_po_fields(
         'hit_po_count': len(hits),
         'hits': hits,
         'note': '已扫描完所有PO未找到目标字段' if not hits else '',
+        # 当0命中时，用此字段确认扫描确实在工作（字段是否出现在 OSLC 响应里）
+        'scan_probe_first_po': first_po_probe,
     }
 
 
-@router.get("/debug/mxitem/{item_num}", summary="诊断：查询MXITEM物料主数据字段")
+@router.get("/debug/mxitem/{item_num}", summary="诊断：查询MXITEM/MXAPIITEM物料主数据字段")
 async def debug_mxitem_fields(item_num: str):
     """
-    通过 OSLC `MXITEM` 对象查询指定物料的完整字段，
-    找出型号（catalogcode / manufacturernum）、规格（newitemdesc）
+    通过 OSLC 查询指定物料的完整字段，
+    找出型号（catalogcode / manufacturernum / modelnum）、规格（newitemdesc）
     等字段是否存在于物料主数据里。
 
+    依次尝试对象名：`MXAPIITEM` → `MXITEM` → `MXAPIITMSPEC`，
+    返回第一个成功的结果及所有尝试的状态码（便于排查 400）。
+
     **用途：** 当 MXAPIPO poline 中 catalogcode/newitemdesc 为空时，
-    看 MXITEM 里是否有对应数据。
+    看物料主数据是否有对应的型号/规格信息。
     """
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
@@ -595,15 +615,19 @@ async def debug_mxitem_fields(item_num: str):
         'Cookie': auth['cookie'],
         'x-csrf-token': auth['csrf_token'],
     }
-    url = f"{MAXIMO_BASE_URL}/oslc/os/MXITEM"
-    params = {
-        'oslc.select': '*',
-        'oslc.where': f'itemnum="{item_num}"',
-        '_dropnulls': 0,
-    }
 
-    def _fetch():
-        import requests
+    # Maximo 不同版本/配置下物料对象名不同，依次尝试
+    CANDIDATE_OBJECTS = ['MXAPIITEM', 'MXITEM', 'mxapiitem']
+
+    attempt_log = []
+
+    def _try_fetch(obj_name: str):
+        url = f"{MAXIMO_BASE_URL}/oslc/os/{obj_name}"
+        params = {
+            'oslc.select': '*',
+            'oslc.where': f'itemnum="{item_num}"',
+            '_dropnulls': '0',
+        }
         resp = requests.get(
             url, headers=headers, params=params,
             verify=VERIFY_SSL,
@@ -614,32 +638,64 @@ async def debug_mxitem_fields(item_num: str):
 
     loop = asyncio.get_event_loop()
     executor = ThreadPoolExecutor(max_workers=1)
-    try:
-        resp = await loop.run_in_executor(executor, _fetch)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"请求失败: {e}")
-    finally:
-        executor.shutdown(wait=False)
+    success_resp = None
+    used_object = None
 
-    if resp.status_code == 401:
-        raise HTTPException(status_code=401, detail="认证失败（401）")
-    if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"Maximo 返回 {resp.status_code}")
+    for obj_name in CANDIDATE_OBJECTS:
+        try:
+            resp = await loop.run_in_executor(
+                executor, lambda o=obj_name: _try_fetch(o)
+            )
+        except Exception as e:
+            attempt_log.append({'object': obj_name, 'status': 'exception', 'error': str(e)})
+            continue
 
-    data = resp.json()
+        entry = {
+            'object': obj_name,
+            'status_code': resp.status_code,
+        }
+        if resp.status_code == 400:
+            try:
+                entry['error_body'] = resp.json()
+            except Exception:
+                entry['error_body'] = resp.text[:500]
+        attempt_log.append(entry)
+
+        if resp.status_code == 200:
+            success_resp = resp
+            used_object = obj_name
+            break
+        if resp.status_code == 401:
+            break  # 认证问题，不必继续尝试
+
+    executor.shutdown(wait=False)
+
+    if success_resp is None:
+        return {
+            'item_num': item_num,
+            'found': False,
+            'message': '所有候选 OSLC 对象均未成功（见 attempt_log）',
+            'attempt_log': attempt_log,
+        }
+
+    data = success_resp.json()
     items = data.get('member') or data.get('rdfs:member') or []
     if not items:
-        return {'item_num': item_num, 'found': False, 'message': '未找到该物料'}
+        return {
+            'item_num': item_num,
+            'found': False,
+            'message': '查询成功但未找到该物料',
+            'used_object': used_object,
+            'attempt_log': attempt_log,
+        }
 
     # 标准化（去命名空间前缀）
     raw = items[0]
     clean = {(k.split(':', 1)[1] if ':' in k else k): v for k, v in raw.items()}
 
-    # 分类输出
     fields_with_values = {k: v for k, v in clean.items() if v is not None and v != ''}
-    fields_null = [k for k, v in clean.items() if v is None or v == '']
+    fields_null = sorted(k for k, v in clean.items() if v is None or v == '')
 
-    # 重点关注的型号/规格相关字段
     FOCUS_FIELDS = [
         'catalogcode', 'newitemdesc', 'manufacturernum', 'modelnum',
         'manufacturer', 'itemnum', 'description', 'itemtype',
@@ -650,8 +706,10 @@ async def debug_mxitem_fields(item_num: str):
     return {
         'item_num': item_num,
         'found': True,
+        'used_object': used_object,
         'focus_fields': focus,
         'fields_with_values': fields_with_values,
-        'null_fields': sorted(fields_null),
+        'null_fields': fields_null,
         'total_fields': len(clean),
+        'attempt_log': attempt_log,
     }
