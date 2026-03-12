@@ -19,6 +19,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.fetcher.po_fetcher import fetch_po_list
+from src.fetcher.item_fetcher import fetch_item_specs
 from src.sync.db_init import init_schema
 from src.sync.material import validate_and_sync_materials
 from src.sync.po_header import batch_map_headers, batch_insert_headers, check_po_exists
@@ -174,6 +175,19 @@ class POSyncService:
     # 内部实现
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _collect_item_nums(po_list: list) -> list:
+        """从 PO 列表的 poline 中收集所有不重复的 itemnum"""
+        seen = []
+        dedup = set()
+        for po in po_list:
+            for line in po.get('poline', []):
+                num = line.get('itemnum')
+                if num and num not in dedup:
+                    dedup.add(num)
+                    seen.append(num)
+        return seen
+
     def _ensure_schema(self, conn):
         """首次运行时初始化数据库字段（只执行一次）"""
         if self._schema_initialized:
@@ -265,9 +279,13 @@ class POSyncService:
             if material_map is None:
                 material_map = {}
 
+            # 步骤 3b：从 MXAPIITEM 批量查物料规格（cxmfprodnum → model_num）
+            item_nums = self._collect_item_nums(new_pos)
+            item_spec_map = fetch_item_specs(item_nums) if item_nums else {}
+
             # 步骤 4：清洗数据（先清洗，后入库）
             cleaned_headers, pre_header_id_map = batch_map_headers(cursor, new_pos)
-            cleaned_details = batch_map_details(cursor, new_pos, pre_header_id_map, material_map)
+            cleaned_details = batch_map_details(cursor, new_pos, pre_header_id_map, material_map, item_spec_map)
 
             # 步骤 5：插入主表（使用清洗后数据）
             header_map = batch_insert_headers(
@@ -357,8 +375,11 @@ class POSyncService:
                 auto_sync=self._config['auto_sync_materials'],
             ) or {}
 
+            item_nums = self._collect_item_nums(po_list)
+            item_spec_map = fetch_item_specs(item_nums) if item_nums else {}
+
             cleaned_headers, pre_header_id_map = batch_map_headers(cursor, po_list)
-            cleaned_details = batch_map_details(cursor, po_list, pre_header_id_map, material_map)
+            cleaned_details = batch_map_details(cursor, po_list, pre_header_id_map, material_map, item_spec_map)
 
             # update_existing=True：删旧记录，重新插入
             header_map = batch_insert_headers(

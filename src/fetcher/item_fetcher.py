@@ -34,6 +34,9 @@ ITEM_SELECT = (
     # ",cxsapmat,manufacturer,commoditygroup"
 )
 
+# PO 行 model_num 填充所需的物料规格字段
+ITEM_SPEC_SELECT = "itemnum,cxmfprodnum,cxtypedsg,cxmanufct"
+
 
 def _normalize(data: dict) -> dict:
     """移除 Maximo 命名空间前缀"""
@@ -155,3 +158,71 @@ def fetch_items(
 
     print(f"[INFO] 共抓取 {len(all_data)} 条物料记录")
     return all_data
+
+
+def fetch_item_specs(item_numbers: List[str]) -> Dict[str, Any]:
+    """
+    批量查询物料的 cxmfprodnum（制造商产品编号/型号）等规格字段。
+
+    按每批 50 个 item_numbers 分批请求，避免 OSLC where 子句过长。
+
+    Args:
+        item_numbers: 物料编号列表
+
+    Returns:
+        {itemnum: {'cxmfprodnum': ..., 'cxtypedsg': ..., 'cxmanufct': ...}}
+        查询失败时返回空 dict（不抛异常，只打印警告）。
+    """
+    if not item_numbers:
+        return {}
+
+    deduped = list(dict.fromkeys(item_numbers))  # 去重，保持顺序
+
+    try:
+        headers = _get_headers()
+    except ValueError as e:
+        print(f"[WARN] fetch_item_specs: 认证失败，跳过物料规格查询: {e}")
+        return {}
+
+    BATCH_SIZE = 50
+    result: Dict[str, Any] = {}
+
+    for i in range(0, len(deduped), BATCH_SIZE):
+        batch = deduped[i: i + BATCH_SIZE]
+        where_clause = " or ".join(f'itemnum="{n}"' for n in batch)
+        params = {
+            "oslc.select":  ITEM_SPEC_SELECT,
+            "oslc.pageSize": len(batch),
+            "_dropnulls":   0,
+            "oslc.where":   where_clause,
+        }
+        try:
+            resp = requests.get(
+                ITEM_API_URL,
+                headers=headers,
+                params=params,
+                verify=VERIFY_SSL,
+                proxies=settings_manager.get_proxies(),
+                timeout=REQUEST_TIMEOUT,
+            )
+            if resp.status_code != 200:
+                print(f"[WARN] fetch_item_specs: Maximo 返回 {resp.status_code}，跳过本批")
+                continue
+            data = resp.json()
+            items = data.get("member") or data.get("rdfs:member") or []
+            for raw in items:
+                item = _normalize(raw)
+                num = item.get("itemnum")
+                if num:
+                    result[num] = {
+                        "cxmfprodnum": item.get("cxmfprodnum") or None,
+                        "cxtypedsg":   item.get("cxtypedsg")   or None,
+                        "cxmanufct":   item.get("cxmanufct")   or None,
+                    }
+        except Exception as e:
+            print(f"[WARN] fetch_item_specs: 批次 {i // BATCH_SIZE + 1} 异常: {e}")
+
+        time.sleep(REQUEST_DELAY)
+
+    print(f"[INFO] fetch_item_specs: 查询 {len(deduped)} 个物料，获得 {len(result)} 条规格数据")
+    return result

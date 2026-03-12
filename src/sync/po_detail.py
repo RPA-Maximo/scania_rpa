@@ -46,6 +46,7 @@ def map_line_data(
     material_id: int = None,
     warehouse_id: int = None,
     header_currency: str = None,
+    item_spec_map: Dict = None,
 ) -> Dict:
     """
     将订单明细 JSON 映射到数据库字段
@@ -92,6 +93,14 @@ def map_line_data(
     result['currency'] = (
         line_data.get('currency') or line_data.get('currencycode') or header_currency or None
     )
+
+    # model_num：catalogcode 在该 Maximo 实例中不维护数据，
+    # fallback 到 MXAPIITEM.cxmfprodnum（制造商产品编号/型号）
+    if not result.get('model_num') and item_spec_map:
+        item_num = line_data.get('itemnum')
+        if item_num:
+            spec = item_spec_map.get(item_num, {})
+            result['model_num'] = spec.get('cxmfprodnum') or spec.get('cxtypedsg') or None
 
     return result
 
@@ -180,6 +189,7 @@ def batch_map_details(
     po_list: List[Dict],
     header_map: Dict[str, int],
     material_map: Dict[str, int],
+    item_spec_map: Dict[str, Dict] = None,
 ) -> Dict[str, List[Dict]]:
     """
     批量清洗订单明细数据（只读 DB 做仓库查询，不写入）
@@ -227,7 +237,7 @@ def batch_map_details(
                     warehouse_cache[warehouse_code] = get_warehouse_id(cursor, warehouse_code)
                 warehouse_id = warehouse_cache[warehouse_code]
 
-            cleaned_lines.append(map_line_data(line, form_id, material_id, warehouse_id, header_currency))
+            cleaned_lines.append(map_line_data(line, form_id, material_id, warehouse_id, header_currency, item_spec_map))
 
         result[po_code] = cleaned_lines
         total_lines += len(cleaned_lines)
