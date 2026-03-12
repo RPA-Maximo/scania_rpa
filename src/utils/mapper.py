@@ -21,34 +21,49 @@ PO_HEADER_MAPPING = {
 }
 
 # Maximo MXAPIPO 供应商字段候选名（取第一个非空值）
-# 不同 Maximo 版本字段名可能不同
+#
+# 实测验证（CN5074，102 个返回字段）：
+#   ✓ vendor       → 供应商代码（"8970301"），唯一有值的供应商字段
+#   ✗ vendorname   → 不返回（Maximo 此字段需 COMPANIES READ 权限）
+#   ✗ venaddress1/vencity/venzip 等 → 均不返回（同上）
+#   ✓ cxpoemail    → 如有值则为接收 PO 的邮箱（本实例未见有值）
+#
+# 供应商名称/地址如需填充，通过 POST /api/vendor-cache 手动录入，
+# fetch_vendor_details 会优先查本地 company_cache 表。
 VENDOR_FIELD_CANDIDATES = {
     'vendor_code':        ['vendor'],
-    'supplier_address':   ['venaddress1', 'venaddr1', 'vendoraddr1'],
-    'supplier_address2':  ['venaddress2', 'venaddr2'],          # 供应商地址2
+    # 以下字段在当前实例不返回，保留以备权限开放后自动生效
+    'supplier_address':   ['venaddress1', 'venaddr1'],
+    'supplier_address2':  ['venaddress2', 'venaddr2'],
     'supplier_zip':       ['venzip', 'venpostalcode'],
     'supplier_city':      ['vencity'],
-    'supplier_state':     ['venstate', 'venprovince', 'venregion'],  # 供应商省/区
-    # supplier_country 不抓（供应商国家不拉）
+    'supplier_state':     ['venstate', 'venprovince'],
     'supplier_contact':   ['vencontact'],
     'supplier_phone':     ['venphone'],
-    'supplier_email':     ['cxpoemail', 'venemail'],            # cxpoemail = 接收PO的邮箱
+    'supplier_email':     ['cxpoemail', 'venemail'],
 }
 
 # Maximo MXAPIPO 收款方（Bill To）+ 内部买方字段候选名
-# 对应 Maximo UI "收货方/收款人" 标签页右侧"收款方"区域
+#
+# 实测验证（CN5074）：
+#   ✓ billto       → 收款方代码（"BILLTOCHINA"）
+#   ✓ shipto       → 收货方代码（"0001"）
+#   ✗ billtocomp/billtoaddress1/billtocity 等 → 均不返回
+#   ✓ cxcontact    → 买方联系人（"+8618015248228 , sandy.zhang@scania.com.cn"）
+#                    格式："+86手机号 , 姓名.姓名@scania.com.cn"
+#
+# 收款方名称/地址如需填充，同样通过 POST /api/vendor-cache（以 billto 代码为键）录入。
 BILLTO_FIELD_CANDIDATES = {
-    'company_name':         ['billtocomp', 'billtoname'],
-    'street_address_1':     ['billtoaddress1', 'billtoaddr1'],
-    'street_address_2':     ['billtoaddress2', 'billtoaddr2'],
-    'postal_code':          ['billtozip', 'billtopostalcode'],
-    'city':                 ['billtocity'],
-    'country':              ['billtocountry'],                  # 国家（动态拉取，不写死）
-    'contact_person':       ['billtocontact'],                  # 联系人
-    'contact_phone':        ['billtophone'],                    # 联系电话
-    'contact_email':        ['billtoemail'],                    # 电子邮件
-    'receiver':             ['shiptoattn'],                     # 接收人（Ship To Attention）
-    # scania_customer_code 不填（无对应 Maximo 字段）
+    'company_name':         ['billtocomp', 'billtoname'],       # 不返回，留候选
+    'street_address_1':     ['billtoaddress1', 'billtoaddr1'],  # 不返回，留候选
+    'street_address_2':     ['billtoaddress2', 'billtoaddr2'],  # 不返回，留候选
+    'postal_code':          ['billtozip', 'billtopostalcode'],  # 不返回，留候选
+    'city':                 ['billtocity'],                     # 不返回，留候选
+    'country':              ['billtocountry'],                  # 不返回，留候选
+    'contact_person':       ['billtocontact', 'cxcontact'],     # cxcontact 有值：买方联系人
+    'contact_phone':        ['billtophone'],                    # 不返回，留候选
+    'contact_email':        ['billtoemail'],                    # 不返回，留候选
+    'receiver':             ['shiptoattn'],                     # 不返回，留候选
 }
 
 # JSON 字段 -> 数据库字段映射 (订单明细)
