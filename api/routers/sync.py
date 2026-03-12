@@ -944,3 +944,144 @@ async def debug_mxitem_for_po(po_number: str):
             '则字段映射正确；否则需调整 ITEM_SPEC_SELECT 中的字段名。'
         ),
     }
+
+
+@router.get("/debug/po-header-raw/{po_number}", summary="诊断：查看指定PO的供应商/收款方原始字段")
+async def debug_po_header_raw(po_number: str):
+    """
+    从 Maximo MXAPIPO 拉取 PO 主表原始数据，展示供应商字段（ven*）和收款方字段（billto*）。
+
+    用于诊断为何数据库中这些字段为空：
+    - 若 Maximo 有值但 DB 为空 → 映射代码或同步需 resync
+    - 若 Maximo 本身为空 → 数据问题（Maximo 未填写）
+    - 同时展示当前 DB 中该 PO 的对应字段值
+    """
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    from config import get_maximo_auth, DEFAULT_HEADERS
+    from config.settings import MAXIMO_BASE_URL, VERIFY_SSL
+    from config.settings_manager import settings_manager
+    import requests, urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    try:
+        auth = get_maximo_auth()
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=f"认证未配置: {e}")
+
+    headers_http = {
+        **DEFAULT_HEADERS,
+        'Cookie': auth['cookie'],
+        'x-csrf-token': auth['csrf_token'],
+    }
+
+    # ── 字段选择（供应商 + 收款方）────────────────────────────────────────
+    ven_fields = (
+        'ponum,vendor,vendorname,'
+        'venaddress1,venaddr1,venaddress2,venaddr2,'
+        'venzip,venpostalcode,vencity,venstate,venprovince,'
+        'vencontact,venphone,venemail,cxpoemail'
+    )
+    billto_fields = (
+        'billtocomp,billtoname,'
+        'billtoaddress1,billtoaddr1,billtoaddress2,billtoaddr2,'
+        'billtocity,billtozip,billtopostalcode,billtocountry,'
+        'billtocontact,billtophone,billtoemail,shiptoattn'
+    )
+
+    loop = asyncio.get_event_loop()
+    executor = ThreadPoolExecutor(max_workers=1)
+
+    def _fetch():
+        url = f"{MAXIMO_BASE_URL}/oslc/os/MXAPIPO"
+        params = {
+            'oslc.select': f'{ven_fields},{billto_fields}',
+            'oslc.where':  f'ponum="{po_number}"',
+            '_dropnulls':  '0',
+        }
+        resp = requests.get(
+            url, headers=headers_http, params=params,
+            verify=VERIFY_SSL, proxies=settings_manager.get_proxies(), timeout=60,
+        )
+        return resp
+
+    try:
+        resp = await loop.run_in_executor(executor, _fetch)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"请求失败: {e}")
+
+    if resp.status_code == 401:
+        raise HTTPException(status_code=401, detail="认证过期，请更新 Cookie")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Maximo 返回 {resp.status_code}: {resp.text[:300]}")
+
+    data = resp.json()
+    members = data.get('member') or data.get('rdfs:member') or []
+    if not members:
+        raise HTTPException(status_code=404, detail=f"PO {po_number} 未找到")
+
+    # 标准化（去命名空间前缀）
+    raw = members[0]
+    po = {}
+    for k, v in raw.items():
+        clean = k.split(':', 1)[1] if ':' in k else k
+        po[clean] = v
+
+    # ── 从 DB 取当前已同步值 ──────────────────────────────────────────────
+    db_row = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            """SELECT vendor_code, supplier_name, supplier_address, supplier_address2,
+                      supplier_zip, supplier_city, supplier_state,
+                      supplier_contact, supplier_phone, supplier_email,
+                      company_name, street_address, city, postal_code, country
+               FROM purchase_order WHERE code = %s AND del_flag = 0""",
+            (po_number,)
+        )
+        db_row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        db_row = {'error': str(e)}
+
+    # ── 整理展示 ──────────────────────────────────────────────────────────
+    ven_keys = [
+        'vendor', 'vendorname',
+        'venaddress1', 'venaddr1', 'venaddress2', 'venaddr2',
+        'venzip', 'venpostalcode', 'vencity', 'venstate', 'venprovince',
+        'vencontact', 'venphone', 'venemail', 'cxpoemail',
+    ]
+    billto_keys = [
+        'billtocomp', 'billtoname',
+        'billtoaddress1', 'billtoaddr1', 'billtoaddress2', 'billtoaddr2',
+        'billtocity', 'billtozip', 'billtopostalcode', 'billtocountry',
+        'billtocontact', 'billtophone', 'billtoemail', 'shiptoattn',
+    ]
+
+    maximo_vendor  = {k: po.get(k) for k in ven_keys}
+    maximo_billto  = {k: po.get(k) for k in billto_keys}
+
+    filled_ven    = sum(1 for v in maximo_vendor.values() if v)
+    filled_billto = sum(1 for v in maximo_billto.values() if v)
+
+    return {
+        'po_number':     po_number,
+        'maximo_vendor': {
+            'filled_count': filled_ven,
+            'total_fields': len(ven_keys),
+            'fields':       maximo_vendor,
+        },
+        'maximo_billto': {
+            'filled_count': filled_billto,
+            'total_fields': len(billto_keys),
+            'fields':       maximo_billto,
+        },
+        'db_current': db_row,
+        'hint': (
+            'maximo_vendor/maximo_billto 显示 Maximo API 返回值；'
+            'db_current 显示当前数据库存储值。'
+            '若 Maximo 有值但 DB 为空，执行 POST /api/sync/po/resync 重新同步该 PO。'
+        ),
+    }

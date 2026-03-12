@@ -77,7 +77,15 @@ def ensure_po_columns(cursor):
                               "VARCHAR(100) NULL COMMENT '城市'")
     _add_column_if_not_exists(cursor, 'purchase_order', 'country',
                               "VARCHAR(100) NULL COMMENT '国家'")
-    # contact_person / contact_phone / contact_email / receiver → 不抓，不建列
+    # 收款方联系信息（billtocontact / billtophone / billtoemail / shiptoattn）
+    _add_column_if_not_exists(cursor, 'purchase_order', 'contact_person',
+                              "VARCHAR(100) NULL COMMENT '收款方联系人'")
+    _add_column_if_not_exists(cursor, 'purchase_order', 'contact_phone',
+                              "VARCHAR(50) NULL COMMENT '收款方联系电话'")
+    _add_column_if_not_exists(cursor, 'purchase_order', 'contact_email',
+                              "VARCHAR(200) NULL COMMENT '收款方电子邮件'")
+    _add_column_if_not_exists(cursor, 'purchase_order', 'receiver',
+                              "VARCHAR(100) NULL COMMENT '接收人（shiptoattn）'")
 
     # ── purchase_order_bd 子表 ──────────────────────────────────────────
 
