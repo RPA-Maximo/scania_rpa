@@ -239,7 +239,7 @@ class KeepaliveManager:
                 [sys.executable, str(worker_script)],
                 capture_output=True,
                 text=True,
-                timeout=120,  # 2 分钟超时（导航重试最坏情况约 91s）
+                timeout=30,   # 30s 超时（JS fetch 保活，CDP 连接 + 单次请求约 5s）
                 cwd=str(PROJECT_ROOT)
             )
 
@@ -297,7 +297,7 @@ class KeepaliveManager:
             self.last_keepalive_result = {
                 'success': False,
                 'reason': 'timeout',
-                'message': '保活脚本执行超时 (>120s)',
+                'message': '保活脚本执行超时 (>30s)',
                 'po_count': 0
             }
             self.last_keepalive_time = time.time()
