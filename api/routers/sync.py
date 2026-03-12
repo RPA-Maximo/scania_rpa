@@ -901,21 +901,36 @@ async def debug_mxitem_for_po(po_number: str):
     for entry in poline_summary:
         num = entry['itemnum']
         spec = item_spec_map.get(num, {}) if num else {}
+        # size_info 解析逻辑（与 map_line_data 保持一致）
+        size_info = spec.get('catalogcode')
+        if not size_info:
+            item_desc = spec.get('description') or ''
+            if '/' in item_desc:
+                eng_part = item_desc.split('/', 1)[1].strip()
+                _generic = {'tool', 'tools', 'item', 'na', 'n/a', ''}
+                if eng_part.lower() not in _generic:
+                    size_info = eng_part
+
         rows.append({
-            'polinenum':     entry['polinenum'],
-            'itemnum':       num,
-            'description':   entry['description'],
-            # poline 原始值
+            'polinenum':          entry['polinenum'],
+            'itemnum':            num,
+            'poline_description': entry['description'],
+            # poline 原始值（通常为 null）
             'poline_catalogcode': entry['catalogcode'],
             'poline_newitemdesc': entry['newitemdesc'],
-            # MXAPIITEM cx 字段（将写入 DB 的值）
-            'mxitem_cxmfprodnum': spec.get('cxmfprodnum'),   # → model_num（型号）
-            'mxitem_cxtypedsg':   spec.get('cxtypedsg'),     # → size_info（尺寸）
-            'mxitem_cxmanufct':   spec.get('cxmanufct'),     # → 制造商
+            # MXAPIITEM 字段
+            'mxitem_cxtypedsg':   spec.get('cxtypedsg'),    # → model_num（型号）★
+            'mxitem_cxmfprodnum': spec.get('cxmfprodnum'),  # 制造商产品编号（参考）
+            'mxitem_catalogcode': spec.get('catalogcode'),  # → size_info 首选
+            'mxitem_description': spec.get('description'),  # → size_info fallback 来源
+            'mxitem_cxmanufct':   spec.get('cxmanufct'),
+            # 最终写入 DB 的值（预览）
+            'db_model_num':   spec.get('cxtypedsg'),
+            'db_size_info':   size_info,
         })
 
-    filled_model = sum(1 for r in rows if r['mxitem_cxmfprodnum'])
-    filled_size  = sum(1 for r in rows if r['mxitem_cxtypedsg'])
+    filled_model = sum(1 for r in rows if r['db_model_num'])
+    filled_size  = sum(1 for r in rows if r['db_size_info'])
 
     return {
         'po_number':     po_number,

@@ -95,18 +95,30 @@ def map_line_data(
     )
 
     # model_num / size_info：
-    # catalogcode / newitemdesc 在该 Maximo 实例中不维护数据，
-    # fallback 到 MXAPIITEM 的 Scania 自定义字段：
-    #   cxmfprodnum → 型号（制造商产品编号）
-    #   cxtypedsg   → 尺寸/质量（类型设计编号）
+    # catalogcode / newitemdesc 在 poline 中不维护数据，从 MXAPIITEM 读取：
+    #   cxtypedsg   → model_num（型号，UI 验证：与 Maximo PO行"型号"列完全一致）
+    #   catalogcode → size_info 首选（MXAPIITEM 规格代码）
+    #   description → size_info 备选（取 "/" 后半部分，例如 "工具/ITB-A61-40-10" → "ITB-A61-40-10"）
     if item_spec_map:
         item_num = line_data.get('itemnum')
         if item_num:
             spec = item_spec_map.get(item_num, {})
             if not result.get('model_num'):
-                result['model_num'] = spec.get('cxmfprodnum') or None
+                result['model_num'] = spec.get('cxtypedsg') or None
+
             if not result.get('size_info'):
-                result['size_info'] = spec.get('cxtypedsg') or None
+                # 优先用 MXAPIITEM.catalogcode
+                size = spec.get('catalogcode')
+                # fallback：从物料描述的 "/" 后半部分提取英文规格
+                if not size:
+                    item_desc = spec.get('description') or ''
+                    if '/' in item_desc:
+                        eng_part = item_desc.split('/', 1)[1].strip()
+                        # 过滤掉无意义的通用词（tool/Tool/item/NA 等）
+                        _generic = {'tool', 'tools', 'item', 'na', 'n/a', ''}
+                        if eng_part.lower() not in _generic:
+                            size = eng_part
+                result['size_info'] = size or None
 
     return result
 

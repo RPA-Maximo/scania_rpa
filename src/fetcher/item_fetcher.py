@@ -34,8 +34,12 @@ ITEM_SELECT = (
     # ",cxsapmat,manufacturer,commoditygroup"
 )
 
-# PO 行 model_num 填充所需的物料规格字段
-ITEM_SPEC_SELECT = "itemnum,cxmfprodnum,cxtypedsg,cxmanufct"
+# PO 行 model_num / size_info 填充所需的物料规格字段
+# cxtypedsg   → model_num（型号，UI 验证：行4/5 cxtypedsg=ITB-P31-12-10/ETV... 与 UI 完全一致）
+# cxmfprodnum → 制造商产品编号（与 cxtypedsg 不同时是内部编号，不展示为型号）
+# catalogcode → size_info 候选（MXAPIITEM 层面的规格代码，需验证）
+# description → size_info 候选 fallback（"中文/English" 格式，取 "/" 后半部分）
+ITEM_SPEC_SELECT = "itemnum,cxtypedsg,cxmfprodnum,cxmanufct,catalogcode,description"
 
 
 def _normalize(data: dict) -> dict:
@@ -226,9 +230,11 @@ def fetch_item_specs(item_numbers: List[str]) -> Dict[str, Any]:
                 num = item.get("itemnum")
                 if num:
                     result[num] = {
-                        "cxmfprodnum": item.get("cxmfprodnum") or None,
-                        "cxtypedsg":   item.get("cxtypedsg")   or None,
-                        "cxmanufct":   item.get("cxmanufct")   or None,
+                        "cxtypedsg":   item.get("cxtypedsg")   or None,   # 型号（UI 验证字段）
+                        "cxmfprodnum": item.get("cxmfprodnum") or None,   # 制造商产品编号
+                        "cxmanufct":   item.get("cxmanufct")   or None,   # 制造商
+                        "catalogcode": item.get("catalogcode") or None,   # 规格代码（size_info 候选）
+                        "description": item.get("description") or None,   # 物料描述（size_info fallback）
                     }
         except Exception as e:
             print(f"[WARN] fetch_item_specs: 批次 {batch_num} 异常: {e}")
