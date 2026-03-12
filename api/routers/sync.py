@@ -907,8 +907,7 @@ async def debug_mxitem_for_po(po_number: str):
             item_desc = spec.get('description') or ''
             if '/' in item_desc:
                 eng_part = item_desc.split('/', 1)[1].strip()
-                _generic = {'tool', 'tools', 'item', 'na', 'n/a', ''}
-                if eng_part.lower() not in _generic:
+                if '-' in eng_part:
                     size_info = eng_part
 
         rows.append({

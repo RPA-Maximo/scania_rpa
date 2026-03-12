@@ -109,14 +109,15 @@ def map_line_data(
             if not result.get('size_info'):
                 # 优先用 MXAPIITEM.catalogcode
                 size = spec.get('catalogcode')
-                # fallback：从物料描述的 "/" 后半部分提取英文规格
+                # fallback：从物料描述的 "/" 后半部分提取规格代码
                 if not size:
                     item_desc = spec.get('description') or ''
                     if '/' in item_desc:
                         eng_part = item_desc.split('/', 1)[1].strip()
-                        # 过滤掉无意义的通用词（tool/Tool/item/NA 等）
-                        _generic = {'tool', 'tools', 'item', 'na', 'n/a', ''}
-                        if eng_part.lower() not in _generic:
+                        # 只有包含连字符的才是真正的产品规格代码
+                        # （如 "ITB-A61-40-10"、"BCP BL-12-I06"）
+                        # 纯英文描述（"Tightening tool"、"Nut runner"）→ NA/null
+                        if '-' in eng_part:
                             size = eng_part
                 result['size_info'] = size or None
 
