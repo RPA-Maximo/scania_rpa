@@ -184,17 +184,23 @@ def fetch_item_specs(item_numbers: List[str]) -> Dict[str, Any]:
         print(f"[WARN] fetch_item_specs: 认证失败，跳过物料规格查询: {e}")
         return {}
 
-    BATCH_SIZE = 50
+    # 批次大小：20 条/批，避免 oslc.where in[...] 子句过长导致 URL 超限
+    BATCH_SIZE = 20
     result: Dict[str, Any] = {}
 
     for i in range(0, len(deduped), BATCH_SIZE):
         batch = deduped[i: i + BATCH_SIZE]
-        where_clause = " or ".join(f'itemnum="{n}"' for n in batch)
+        batch_num = i // BATCH_SIZE + 1
+
+        # Maximo OSLC 正确的多值查询语法：itemnum in ["a","b","c"]
+        quoted = ",".join(f'"{n}"' for n in batch)
+        where_clause = f'itemnum in [{quoted}]'
+
         params = {
-            "oslc.select":  ITEM_SPEC_SELECT,
+            "oslc.select":   ITEM_SPEC_SELECT,
             "oslc.pageSize": len(batch),
-            "_dropnulls":   0,
-            "oslc.where":   where_clause,
+            "_dropnulls":    0,
+            "oslc.where":    where_clause,
         }
         try:
             resp = requests.get(
@@ -206,11 +212,16 @@ def fetch_item_specs(item_numbers: List[str]) -> Dict[str, Any]:
                 timeout=REQUEST_TIMEOUT,
             )
             if resp.status_code != 200:
-                print(f"[WARN] fetch_item_specs: Maximo 返回 {resp.status_code}，跳过本批")
+                print(
+                    f"[WARN] fetch_item_specs: 批次 {batch_num} "
+                    f"HTTP {resp.status_code} — {resp.text[:200]}"
+                )
                 continue
             data = resp.json()
-            items = data.get("member") or data.get("rdfs:member") or []
-            for raw in items:
+            members = data.get("member") or data.get("rdfs:member") or []
+            if not members:
+                print(f"[WARN] fetch_item_specs: 批次 {batch_num} 返回 0 条（items={batch[:3]}...）")
+            for raw in members:
                 item = _normalize(raw)
                 num = item.get("itemnum")
                 if num:
@@ -220,7 +231,7 @@ def fetch_item_specs(item_numbers: List[str]) -> Dict[str, Any]:
                         "cxmanufct":   item.get("cxmanufct")   or None,
                     }
         except Exception as e:
-            print(f"[WARN] fetch_item_specs: 批次 {i // BATCH_SIZE + 1} 异常: {e}")
+            print(f"[WARN] fetch_item_specs: 批次 {batch_num} 异常: {e}")
 
         time.sleep(REQUEST_DELAY)
 
