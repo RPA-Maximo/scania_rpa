@@ -135,8 +135,11 @@ def map_header_data(cursor, po_data: Dict) -> Dict:
     result['postal_code']    = _first_nonempty(po_data, bc['postal_code']) or None
     result['city']           = _first_nonempty(po_data, bc['city']) or None
     result['country']        = _first_nonempty(po_data, bc['country']) or None
-
-    # contact_person / contact_phone / contact_email / receiver / scania_customer_code 均不抓
+    result['contact_person'] = _first_nonempty(po_data, bc['contact_person']) or None
+    result['contact_phone']  = _safe_phone(_first_nonempty(po_data, bc['contact_phone']))
+    result['contact_email']  = _first_nonempty(po_data, bc['contact_email']) or None
+    result['receiver']       = _first_nonempty(po_data, bc['receiver']) or None
+    # scania_customer_code 无对应 Maximo 字段，保持空值
 
     return result
 

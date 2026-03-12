@@ -55,8 +55,10 @@ _PO_OSLC_SELECT = (
     'billtocity,'
     'billtozip,billtopostalcode,'
     'billtocountry,'
-    # billtoattn/billtocontact/billtophone/billtoemail → 不抓（联系人/电话/邮件不抓默认表信息）
-    # shiptoattn/shiptocontact/shiptocomp → 不抓（接收人不抓）
+    'billtocontact,'                    # 联系人
+    'billtophone,'                      # 联系电话
+    'billtoemail,'                      # 电子邮件
+    'shiptoattn,'                       # 接收人（Ship To Attention）
     # buyercode/custcode/ourreference → 不填（斯堪尼亚客户代码不填）
     # ── 采购订单行（poline）─────────────────────────────────────────────
     # 显式指定子表字段，避免依赖 * 的隐式行为

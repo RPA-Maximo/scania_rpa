@@ -44,11 +44,11 @@ BILLTO_FIELD_CANDIDATES = {
     'postal_code':          ['billtozip', 'billtopostalcode'],
     'city':                 ['billtocity'],
     'country':              ['billtocountry'],                  # 国家（动态拉取，不写死）
-    # contact_person 不抓（联系人不抓默认表信息）
-    # contact_phone  不抓（联系电话不抓默认表信息）
-    # contact_email  不抓（电子邮件不抓，默认）
-    # receiver       不抓（接收人不抓）
-    # scania_customer_code 不填
+    'contact_person':       ['billtocontact'],                  # 联系人
+    'contact_phone':        ['billtophone'],                    # 联系电话
+    'contact_email':        ['billtoemail'],                    # 电子邮件
+    'receiver':             ['shiptoattn'],                     # 接收人（Ship To Attention）
+    # scania_customer_code 不填（无对应 Maximo 字段）
 }
 
 # JSON 字段 -> 数据库字段映射 (订单明细)
