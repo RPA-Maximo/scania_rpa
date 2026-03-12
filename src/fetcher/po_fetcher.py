@@ -35,33 +35,9 @@ REQUEST_TIMEOUT = 120
 #   收货方 billto 地址合并 addr1 + addr2
 #   poline{*} 显式选择，确保子表完整返回
 _PO_OSLC_SELECT = (
+    # * 返回所有 PO 头字段（含 vendor/billto/cxcontact 等），无需重复列举
     '*,'
-    'requireddate,'
-    # ── 供应商信息 ────────────────────────────────────────────────────────
-    'vendor,vendorname,'
-    'venaddress1,venaddr1,'
-    'venaddress2,venaddr2,'
-    'venzip,venpostalcode,'
-    'vencity,'
-    'venstate,venprovince,'
-    # vencountry/vennation → 不抓（供应商国家不拉）
-    'vencontact,'
-    'venphone,'
-    'venemail,cxpoemail,'
-    # ── 收款方信息（Bill To）────────────────────────────────────────────
-    'billtocomp,billtoname,'
-    'billtoaddress1,billtoaddr1,'
-    'billtoaddress2,billtoaddr2,'
-    'billtocity,'
-    'billtozip,billtopostalcode,'
-    'billtocountry,'
-    'billtocontact,'                    # 联系人
-    'billtophone,'                      # 联系电话
-    'billtoemail,'                      # 电子邮件
-    'shiptoattn,'                       # 接收人（Ship To Attention）
-    # buyercode/custcode/ourreference → 不填（斯堪尼亚客户代码不填）
-    # ── 采购订单行（poline）─────────────────────────────────────────────
-    # 显式指定子表字段，避免依赖 * 的隐式行为
+    # 显式指定 poline 子表字段（* 不会自动展开子表）
     'poline{polinenum,description,itemnum,orderqty,orderunit,'
     'catalogcode,newitemdesc,location,storeloc,'
     'linecost,unitcost,polinediscpct,linetype,currency,receiptscomplete}'
