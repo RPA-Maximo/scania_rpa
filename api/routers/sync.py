@@ -1189,3 +1189,97 @@ async def debug_po_all_fields(po_number: str):
             '将找到的字段名更新到 src/utils/mapper.py 的 VENDOR_FIELD_CANDIDATES / BILLTO_FIELD_CANDIDATES。'
         ),
     }
+
+
+@router.get("/debug/company/{company_code}", summary="诊断：从MXAPICOMPANY查询公司（供应商/收款方）详细信息")
+async def debug_company(
+    company_code: str,
+    api_object: str = Query("MXAPICOMPANY", description="Maximo API 对象名，如 MXAPICOMPANY / MXAPIVENDOR"),
+):
+    """
+    查询 Maximo 公司档案 API，用于获取供应商/收款方地址信息。
+
+    **用法：**
+    - `GET /debug/company/8970301` — 查询供应商 8970301 的公司信息
+    - `GET /debug/company/BILLTOCHINA` — 查询收款方 BILLTOCHINA 的公司信息
+    - `GET /debug/company/8970301?api_object=MXAPIVENDOR` — 尝试 MXAPIVENDOR
+
+    返回 Maximo 公司档案的全部标量字段（含名称、地址等）。
+    """
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    from config import get_maximo_auth, DEFAULT_HEADERS
+    from config.settings import MAXIMO_BASE_URL, VERIFY_SSL
+    from config.settings_manager import settings_manager
+    import requests, urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    try:
+        auth = get_maximo_auth()
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=f"认证未配置: {e}")
+
+    headers_http = {
+        **DEFAULT_HEADERS,
+        'Cookie': auth['cookie'],
+        'x-csrf-token': auth['csrf_token'],
+    }
+
+    loop = asyncio.get_event_loop()
+    executor = ThreadPoolExecutor(max_workers=1)
+
+    # 尝试多种 where 条件（不同 Maximo 版本字段名不同）
+    where_attempts = [
+        f'company="{company_code}"',
+        f'vendor="{company_code}"',
+        f'companynum="{company_code}"',
+    ]
+
+    def _fetch(where_clause: str):
+        url = f"{MAXIMO_BASE_URL}/oslc/os/{api_object}"
+        params = {
+            'oslc.select': '*',
+            'oslc.where':  where_clause,
+            '_dropnulls':  '0',
+            'oslc.pageSize': 1,
+        }
+        return requests.get(
+            url, headers=headers_http, params=params,
+            verify=VERIFY_SSL, proxies=settings_manager.get_proxies(), timeout=60,
+        )
+
+    results = []
+    for where in where_attempts:
+        try:
+            resp = await loop.run_in_executor(executor, lambda w=where: _fetch(w))
+            if resp.status_code == 200:
+                data = resp.json()
+                members = data.get('member') or data.get('rdfs:member') or []
+                if members:
+                    raw = members[0]
+                    record = {}
+                    for k, v in raw.items():
+                        clean = k.split(':', 1)[1] if ':' in k else k
+                        if not isinstance(v, (dict, list)):
+                            record[clean] = v
+                    results.append({'where': where, 'found': True, 'fields': record})
+                    break  # 找到就停止
+                else:
+                    results.append({'where': where, 'found': False, 'http_status': resp.status_code})
+            else:
+                results.append({'where': where, 'found': False, 'http_status': resp.status_code,
+                                'error': resp.text[:200]})
+        except Exception as e:
+            results.append({'where': where, 'found': False, 'error': str(e)})
+
+    found = next((r for r in results if r.get('found')), None)
+    return {
+        'company_code': company_code,
+        'api_object':   api_object,
+        'attempts':     results,
+        'company_fields': found['fields'] if found else None,
+        'hint': (
+            '若 company_fields 中有名称/地址字段，说明可通过此 API 获取供应商/收款方信息。'
+            '若所有 where 条件都返回 found=false，尝试参数 api_object=MXAPIVENDOR 或 MXAPIADDRESS。'
+        ),
+    }
