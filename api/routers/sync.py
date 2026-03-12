@@ -1253,8 +1253,16 @@ async def debug_company(company_code: str):
         )
         return resp
 
+    def _probe_no_where(api_obj: str):
+        """无 where 条件取第 1 条，用于探测字段名"""
+        url = f"{MAXIMO_BASE_URL}/oslc/os/{api_obj}"
+        params = {'oslc.select': '*', '_dropnulls': '0', 'oslc.pageSize': 1}
+        return requests.get(url, headers=headers_http, params=params,
+                            verify=VERIFY_SSL, proxies=settings_manager.get_proxies(), timeout=30)
+
     scan_results = []
     found_record = None
+    sample_fields: dict = {}   # API 存在但 where 错误时，无条件抓一条样本探字段名
 
     for api_obj, where in CANDIDATES:
         try:
@@ -1271,23 +1279,44 @@ async def debug_company(company_code: str):
                         clean = k.split(':', 1)[1] if ':' in k else k
                         if not isinstance(v, (dict, list)):
                             record[clean] = v
-                    scan_results.append({'api': api_obj, 'where': where, 'result': 'found', 'field_count': len(record)})
+                    scan_results.append({'api': api_obj, 'where': where, 'result': 'found',
+                                         'field_count': len(record)})
                     if not found_record:
                         found_record = {'api': api_obj, 'where': where, 'fields': record}
                 else:
                     scan_results.append({'api': api_obj, 'where': where, 'result': 'no_record'})
+            elif status == 400:
+                # API 存在但 where 字段名有误 → 抓一条无条件样本探字段名
+                scan_results.append({'api': api_obj, 'where': where, 'result': 'http_400_bad_where'})
+                if api_obj not in sample_fields:
+                    try:
+                        sr = await loop.run_in_executor(executor,
+                                                        lambda o=api_obj: _probe_no_where(o))
+                        if sr.status_code == 200:
+                            sm = sr.json().get('member') or sr.json().get('rdfs:member') or []
+                            if sm:
+                                rec = {}
+                                for k, v in sm[0].items():
+                                    clean = k.split(':', 1)[1] if ':' in k else k
+                                    if not isinstance(v, (dict, list)):
+                                        rec[clean] = v
+                                sample_fields[api_obj] = rec
+                    except Exception:
+                        pass
             else:
                 scan_results.append({'api': api_obj, 'where': where, 'result': f'http_{status}'})
         except Exception as e:
             scan_results.append({'api': api_obj, 'where': where, 'result': f'error: {e}'})
 
     return {
-        'company_code':  company_code,
-        'scan_results':  scan_results,
-        'found_record':  found_record,
+        'company_code':   company_code,
+        'scan_results':   scan_results,
+        'found_record':   found_record,
+        'sample_fields_from_existing_apis': sample_fields,
         'hint': (
-            'scan_results 中 result=found 的行说明该 API 存在且有此公司记录；'
-            'found_record.fields 包含完整字段（可找到名称/地址字段名）。'
-            '若全部 api_not_found/no_record，说明需要通过其他途径获取供应商/收款方信息。'
+            'result=found → found_record.fields 含完整字段（含名称/地址）。'
+            'result=http_400_bad_where → API 存在但字段名不对；'
+            '查看 sample_fields_from_existing_apis 找正确的 key 字段名，'
+            '然后把字段名回报给开发者以修复 where 子句。'
         ),
     }
