@@ -23,6 +23,7 @@ from rpa.browser import connect_to_browser
 
 # 轻量保活请求：只取 1 条 PO，仅验证 session 是否有效
 _PING_URL = '/maximo/oslc/os/MXAPIPO?oslc.pageSize=1&_dropnulls=1'
+_FETCH_TIMEOUT_MS = 20000   # JS fetch 超时 20s（Maximo API 响应较慢时的保护）
 
 
 async def keepalive_action():
@@ -50,11 +51,16 @@ async def keepalive_action():
             }
 
         # 在浏览器页内发 fetch，same-origin 自动带 cookie，无需额外认证
+        # AbortController 限时 20s，避免 Maximo 响应慢导致 subprocess 超时
         print(f"发送保活 ping: {_PING_URL}", file=sys.stderr)
         fetch_result = await maximo_page.evaluate(f"""
-            () => fetch('{_PING_URL}', {{credentials: 'include'}})
-                    .then(r => ({{status: r.status, ok: r.ok}}))
-                    .catch(e => ({{status: 0, ok: false, error: e.message}}))
+            () => {{
+                const ctrl = new AbortController();
+                const tid = setTimeout(() => ctrl.abort(), {_FETCH_TIMEOUT_MS});
+                return fetch('{_PING_URL}', {{credentials: 'include', signal: ctrl.signal}})
+                    .then(r => {{ clearTimeout(tid); return {{status: r.status, ok: r.ok}}; }})
+                    .catch(e => {{ clearTimeout(tid); return {{status: 0, ok: false, error: e.message}}; }});
+            }}
         """)
 
         status = fetch_result.get('status', 0)
@@ -78,10 +84,12 @@ async def keepalive_action():
                 'http_status': status,
             }
         elif status == 0 and fetch_error:
+            # AbortController 触发时 error message 含 "aborted"
+            reason = 'fetch_timeout' if 'abort' in str(fetch_error).lower() else 'fetch_error'
             return {
                 'success': False,
-                'reason': 'fetch_error',
-                'message': f'fetch 异常: {fetch_error}',
+                'reason': reason,
+                'message': f'fetch {"超时(>20s)" if reason == "fetch_timeout" else "异常"}: {fetch_error}',
                 'http_status': 0,
             }
         else:
