@@ -19,7 +19,7 @@ from config.settings_manager import settings_manager
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-VENDOR_API_URL = f"{MAXIMO_BASE_URL}/oslc/os/MXAPICOMPANY"
+VENDOR_API_URL = f"{MAXIMO_BASE_URL}/oslc/os/MXAPIVENDOR"
 
 REQUEST_TIMEOUT = 120
 
