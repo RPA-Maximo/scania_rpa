@@ -1253,16 +1253,18 @@ async def debug_company(company_code: str):
         )
         return resp
 
-    def _probe_no_where(api_obj: str):
-        """无 where 条件取第 1 条，用于探测字段名"""
-        url = f"{MAXIMO_BASE_URL}/oslc/os/{api_obj}"
-        params = {'oslc.select': '*', '_dropnulls': '0', 'oslc.pageSize': 1}
-        return requests.get(url, headers=headers_http, params=params,
-                            verify=VERIFY_SSL, proxies=settings_manager.get_proxies(), timeout=30)
+    # 200 成功后从响应提取标量字段
+    def _extract_scalars(raw_member: dict) -> dict:
+        rec = {}
+        for k, v in raw_member.items():
+            clean = k.split(':', 1)[1] if ':' in k else k
+            if not isinstance(v, (dict, list)):
+                rec[clean] = v
+        return rec
 
     scan_results = []
     found_record = None
-    sample_fields: dict = {}   # API 存在但 where 错误时，无条件抓一条样本探字段名
+    probe_debug: dict = {}   # 存放样本探测的原始响应信息，供调试
 
     for api_obj, where in CANDIDATES:
         try:
@@ -1274,11 +1276,7 @@ async def debug_company(company_code: str):
                 data = resp.json()
                 members = data.get('member') or data.get('rdfs:member') or []
                 if members:
-                    record = {}
-                    for k, v in members[0].items():
-                        clean = k.split(':', 1)[1] if ':' in k else k
-                        if not isinstance(v, (dict, list)):
-                            record[clean] = v
+                    record = _extract_scalars(members[0])
                     scan_results.append({'api': api_obj, 'where': where, 'result': 'found',
                                          'field_count': len(record)})
                     if not found_record:
@@ -1286,37 +1284,87 @@ async def debug_company(company_code: str):
                 else:
                     scan_results.append({'api': api_obj, 'where': where, 'result': 'no_record'})
             elif status == 400:
-                # API 存在但 where 字段名有误 → 抓一条无条件样本探字段名
+                # API 存在但 where 字段名有误 → 无条件取 1 条样本探字段名
                 scan_results.append({'api': api_obj, 'where': where, 'result': 'http_400_bad_where'})
-                if api_obj not in sample_fields:
-                    try:
-                        sr = await loop.run_in_executor(executor,
-                                                        lambda o=api_obj: _probe_no_where(o))
-                        if sr.status_code == 200:
-                            sm = sr.json().get('member') or sr.json().get('rdfs:member') or []
-                            if sm:
-                                rec = {}
-                                for k, v in sm[0].items():
-                                    clean = k.split(':', 1)[1] if ':' in k else k
-                                    if not isinstance(v, (dict, list)):
-                                        rec[clean] = v
-                                sample_fields[api_obj] = rec
-                    except Exception:
-                        pass
+                if api_obj not in probe_debug:
+                    # 尝试多种无条件或 orgid 限定的查询
+                    probe_attempts = [
+                        {},                                        # 完全无条件
+                        {'oslc.where': 'orgid="CN"'},             # 限定 orgid
+                        {'oslc.where': 'siteid="RUGAO"'},         # 限定 siteid
+                    ]
+                    for extra in probe_attempts:
+                        try:
+                            url2 = f"{MAXIMO_BASE_URL}/oslc/os/{api_obj}"
+                            p2 = {'oslc.select': '*', '_dropnulls': '0',
+                                  'oslc.pageSize': 1, **extra}
+                            sr = await loop.run_in_executor(
+                                executor,
+                                lambda u=url2, p=p2: requests.get(
+                                    u, headers=headers_http, params=p,
+                                    verify=VERIFY_SSL,
+                                    proxies=settings_manager.get_proxies(), timeout=30)
+                            )
+                            probe_debug.setdefault(api_obj, []).append({
+                                'extra_params': extra,
+                                'status': sr.status_code,
+                                'body_preview': sr.text[:300],
+                            })
+                            if sr.status_code == 200:
+                                sm = sr.json().get('member') or sr.json().get('rdfs:member') or []
+                                if sm:
+                                    rec = _extract_scalars(sm[0])
+                                    probe_debug[api_obj][-1]['sample_fields'] = rec
+                                    if not found_record:
+                                        # 还没找到目标记录 → 用 company_code 再查一次
+                                        for fld in ('company', 'vendornum', 'vendor',
+                                                    'companynum', 'orgid', 'addresscode'):
+                                            if fld in rec:
+                                                retry_where = f'{fld}="{company_code}"'
+                                                rr = await loop.run_in_executor(
+                                                    executor,
+                                                    lambda u=url2, fw=retry_where: requests.get(
+                                                        u, headers=headers_http,
+                                                        params={'oslc.select': '*', '_dropnulls': '0',
+                                                                'oslc.pageSize': 1,
+                                                                'oslc.where': fw},
+                                                        verify=VERIFY_SSL,
+                                                        proxies=settings_manager.get_proxies(),
+                                                        timeout=30)
+                                                )
+                                                if rr.status_code == 200:
+                                                    rm = rr.json().get('member') or rr.json().get('rdfs:member') or []
+                                                    if rm:
+                                                        found_record = {
+                                                            'api': api_obj,
+                                                            'where': retry_where,
+                                                            'fields': _extract_scalars(rm[0]),
+                                                        }
+                                                        scan_results.append({
+                                                            'api': api_obj,
+                                                            'where': retry_where,
+                                                            'result': 'found_via_retry',
+                                                        })
+                                                        break
+                                break   # 无条件探测成功就不再尝试下一个
+                        except Exception as pe:
+                            probe_debug.setdefault(api_obj, []).append({'error': str(pe)})
             else:
-                scan_results.append({'api': api_obj, 'where': where, 'result': f'http_{status}'})
+                scan_results.append({'api': api_obj, 'where': where,
+                                     'result': f'http_{status}',
+                                     'body': resp.text[:200]})
         except Exception as e:
             scan_results.append({'api': api_obj, 'where': where, 'result': f'error: {e}'})
 
     return {
-        'company_code':   company_code,
-        'scan_results':   scan_results,
-        'found_record':   found_record,
-        'sample_fields_from_existing_apis': sample_fields,
+        'company_code': company_code,
+        'scan_results': scan_results,
+        'found_record': found_record,
+        'probe_debug':  probe_debug,
         'hint': (
-            'result=found → found_record.fields 含完整字段（含名称/地址）。'
-            'result=http_400_bad_where → API 存在但字段名不对；'
-            '查看 sample_fields_from_existing_apis 找正确的 key 字段名，'
-            '然后把字段名回报给开发者以修复 where 子句。'
+            'result=found/found_via_retry → found_record.fields 含完整字段。'
+            'probe_debug → 每个 API 的无条件样本探测详情（含 body_preview/sample_fields）。'
+            '若 sample_fields 中有记录但 found_record 仍空，查看 probe_debug 中的字段名，'
+            '找到类似 company/vendor/companynum 的 key 字段名回报给开发者。'
         ),
     }
