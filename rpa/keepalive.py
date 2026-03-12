@@ -274,6 +274,25 @@ class KeepaliveManager:
             self.last_keepalive_time = time.time()
 
             if keepalive_result.get('success'):
+                # 自动同步浏览器最新认证信息到 auth_manager
+                auth = keepalive_result.get('auth')
+                if auth:
+                    try:
+                        from config.auth_manager import auth_manager
+                        auth_manager.update_from_fields(
+                            cookie=auth['cookie'],
+                            csrf_token=auth['csrf_token'],
+                            refresh_token=auth.get('refresh_token', ''),
+                        )
+                        ka_logger.info(
+                            f"KEEPALIVE #{count} | 🔑 认证信息已自动更新 "
+                            f"(cookie={len(auth['cookie'])}字节)"
+                        )
+                    except Exception as auth_err:
+                        ka_logger.warning(
+                            f"KEEPALIVE #{count} | ⚠ 认证信息同步失败: {auth_err}"
+                        )
+
                 po_count = keepalive_result.get('po_count', 0)
                 ka_logger.info(
                     f"KEEPALIVE #{count} | ✅ SUCCESS | "

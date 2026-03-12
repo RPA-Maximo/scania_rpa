@@ -27,6 +27,53 @@ _PING_URL = '/maximo/oslc/whoami'
 _FETCH_TIMEOUT_MS = 10000   # JS fetch 超时 10s（whoami 应在 1s 内响应）
 
 
+async def _extract_auth_from_page(maximo_page) -> dict | None:
+    """
+    从 Playwright 页面上下文提取最新认证信息。
+
+    Returns:
+        {'cookie': str, 'csrf_token': str, 'refresh_token': str} 或 None
+    """
+    try:
+        cookies = await maximo_page.context.cookies()
+        cookie_str = '; '.join(f"{c['name']}={c['value']}" for c in cookies)
+
+        # 查找 csrftoken：先找同名 cookie，再尝试 DOM
+        csrf_token = next(
+            (c['value'] for c in cookies if c['name'].lower() == 'csrftoken'),
+            None,
+        )
+        if not csrf_token:
+            csrf_token = await maximo_page.evaluate("""
+                () => {
+                    const el = document.querySelector('input[name="csrftoken"]');
+                    if (el) return el.value;
+                    const meta = document.querySelector('meta[name="csrftoken"]');
+                    if (meta) return meta.getAttribute('content');
+                    // Maximo 有时把 token 放在全局 JS 变量里
+                    if (typeof csrftoken !== 'undefined') return String(csrftoken);
+                    return '';
+                }
+            """) or ''
+
+        refresh_token = next(
+            (c['value'] for c in cookies if c['name'].lower() == 'x-refresh-token'),
+            '',
+        )
+
+        if cookie_str and csrf_token:
+            return {
+                'cookie': cookie_str,
+                'csrf_token': csrf_token,
+                'refresh_token': refresh_token,
+            }
+        print("未能提取 csrftoken（cookie 数量: %d）" % len(cookies), file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"提取认证信息失败: {e}", file=sys.stderr)
+        return None
+
+
 async def keepalive_action():
     """
     执行保活动作：
@@ -34,6 +81,7 @@ async def keepalive_action():
     2. 检查是否在登录页
     3. 在 Maximo 页内用 fetch() 发一次 OSLC 轻量请求（same-origin，cookies 自动携带）
     4. 根据 HTTP 状态码判断 session 是否存活
+    5. 成功时顺带提取最新认证信息，供调用方同步到 auth_manager
     """
     p = None
     try:
@@ -71,12 +119,21 @@ async def keepalive_action():
         print(f"fetch 结果: status={status}, ok={ok}", file=sys.stderr)
 
         if ok:
-            return {
+            result = {
                 'success': True,
                 'reason': 'ok',
                 'message': f'保活成功 (HTTP {status})',
                 'http_status': status,
             }
+            auth = await _extract_auth_from_page(maximo_page)
+            if auth:
+                result['auth'] = auth
+                print(
+                    f"✓ 认证信息已提取 (cookie={len(auth['cookie'])}字节, "
+                    f"csrf={auth['csrf_token'][:6]}...)",
+                    file=sys.stderr,
+                )
+            return result
         elif status in (401, 403):
             return {
                 'success': False,
