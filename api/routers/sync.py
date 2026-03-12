@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from typing import List
 
 from src.sync.po_sync_service import po_sync_service, po_sync_scheduler
@@ -301,6 +301,13 @@ class ResyncRequest(BaseModel):
         min_items=1,
     )
 
+    @validator('po_numbers', each_item=True)
+    def validate_po_number(cls, v):
+        v = v.strip()
+        if not v or v.lower() == 'string' or len(v) < 3:
+            raise ValueError(f"无效的 PO 号: '{v}'，请填写真实的 PO 号（如 CN4300）")
+        return v
+
 
 @router.post("/resync", summary="强制重新同步指定PO（修复历史缺失字段）")
 async def resync_specific_pos(request: ResyncRequest):
@@ -329,6 +336,12 @@ async def resync_specific_pos(request: ResyncRequest):
         executor.shutdown(wait=False)
 
     if not result.get('success') and not result.get('skipped'):
+        fetch_failed = result.get('fetch_failed', [])
+        if fetch_failed and len(fetch_failed) == len(request.po_numbers):
+            raise HTTPException(
+                status_code=422,
+                detail=f"指定的 PO 号在 Maximo 中未找到: {fetch_failed}",
+            )
         raise HTTPException(status_code=500, detail=result.get('message', '重同步失败'))
     return result
 
