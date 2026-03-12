@@ -713,3 +713,104 @@ async def debug_mxitem_fields(item_num: str):
         'total_fields': len(clean),
         'attempt_log': attempt_log,
     }
+
+
+@router.get("/debug/mxitem-for-po/{po_number}", summary="诊断：查看指定PO所有物料的cxmfprodnum/cxtypedsg")
+async def debug_mxitem_for_po(po_number: str):
+    """
+    从 Maximo 抓取指定 PO 的所有 poline，然后批量查询每个 itemnum 的 MXAPIITEM 数据，
+    展示 cxmfprodnum（型号）、cxtypedsg（尺寸/类型设计编号）、cxmanufct（制造商）字段值。
+
+    **用途：** 验证 MXAPIITEM 里的 cx 字段是否与 Maximo UI 里的"型号"和"尺寸/质量"列一致。
+
+    操作步骤：
+    1. 在 Maximo UI 找一个明显有型号/尺寸数据的 PO（如 CN5074）
+    2. 调用此接口，对比返回的 cxmfprodnum / cxtypedsg 与 UI 展示的值是否吻合
+    """
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    from src.fetcher.po_fetcher import fetch_po_by_number
+    from src.fetcher.item_fetcher import fetch_item_specs
+
+    loop = asyncio.get_event_loop()
+    executor = ThreadPoolExecutor(max_workers=1)
+
+    try:
+        po_data = await loop.run_in_executor(
+            executor, lambda: fetch_po_by_number(po_number, save_to_file=False)
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"抓取 Maximo 数据失败: {e}")
+    finally:
+        executor.shutdown(wait=False)
+
+    if not po_data:
+        raise HTTPException(status_code=404, detail=f"未找到 PO: {po_number}（可能认证过期或不存在）")
+
+    poline = po_data.get('poline', [])
+    if not poline:
+        return {'po_number': po_number, 'poline_count': 0, 'message': '该PO无明细行'}
+
+    # 收集 poline 里物料的原始字段值（catalogcode, newitemdesc）
+    poline_summary = []
+    item_nums = []
+    seen = set()
+    for line in poline:
+        num = line.get('itemnum')
+        if num and num not in seen:
+            seen.add(num)
+            item_nums.append(num)
+        poline_summary.append({
+            'polinenum':   line.get('polinenum'),
+            'itemnum':     num,
+            'description': line.get('description'),
+            'catalogcode': line.get('catalogcode'),      # 型号（原始，预期为 null）
+            'newitemdesc': line.get('newitemdesc'),      # 尺寸（原始，预期为 null）
+            'linetype':    line.get('linetype'),
+        })
+
+    # 批量查 MXAPIITEM
+    executor2 = ThreadPoolExecutor(max_workers=1)
+    try:
+        item_spec_map = await loop.run_in_executor(
+            executor2, lambda: fetch_item_specs(item_nums)
+        )
+    except Exception as e:
+        item_spec_map = {}
+    finally:
+        executor2.shutdown(wait=False)
+
+    # 合并结果
+    rows = []
+    for entry in poline_summary:
+        num = entry['itemnum']
+        spec = item_spec_map.get(num, {}) if num else {}
+        rows.append({
+            'polinenum':     entry['polinenum'],
+            'itemnum':       num,
+            'description':   entry['description'],
+            # poline 原始值
+            'poline_catalogcode': entry['catalogcode'],
+            'poline_newitemdesc': entry['newitemdesc'],
+            # MXAPIITEM cx 字段（将写入 DB 的值）
+            'mxitem_cxmfprodnum': spec.get('cxmfprodnum'),   # → model_num（型号）
+            'mxitem_cxtypedsg':   spec.get('cxtypedsg'),     # → size_info（尺寸）
+            'mxitem_cxmanufct':   spec.get('cxmanufct'),     # → 制造商
+        })
+
+    filled_model = sum(1 for r in rows if r['mxitem_cxmfprodnum'])
+    filled_size  = sum(1 for r in rows if r['mxitem_cxtypedsg'])
+
+    return {
+        'po_number':     po_number,
+        'poline_count':  len(poline),
+        'unique_items':  len(item_nums),
+        'item_spec_map_hits': len(item_spec_map),
+        'filled_model_num': filled_model,
+        'filled_size_info': filled_size,
+        'rows': rows,
+        'hint': (
+            '若 mxitem_cxmfprodnum 与 UI 型号列一致、mxitem_cxtypedsg 与 UI 尺寸列一致，'
+            '则字段映射正确；否则需调整 ITEM_SPEC_SELECT 中的字段名。'
+        ),
+    }

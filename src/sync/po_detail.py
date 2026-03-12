@@ -94,13 +94,19 @@ def map_line_data(
         line_data.get('currency') or line_data.get('currencycode') or header_currency or None
     )
 
-    # model_num：catalogcode 在该 Maximo 实例中不维护数据，
-    # fallback 到 MXAPIITEM.cxmfprodnum（制造商产品编号/型号）
-    if not result.get('model_num') and item_spec_map:
+    # model_num / size_info：
+    # catalogcode / newitemdesc 在该 Maximo 实例中不维护数据，
+    # fallback 到 MXAPIITEM 的 Scania 自定义字段：
+    #   cxmfprodnum → 型号（制造商产品编号）
+    #   cxtypedsg   → 尺寸/质量（类型设计编号）
+    if item_spec_map:
         item_num = line_data.get('itemnum')
         if item_num:
             spec = item_spec_map.get(item_num, {})
-            result['model_num'] = spec.get('cxmfprodnum') or spec.get('cxtypedsg') or None
+            if not result.get('model_num'):
+                result['model_num'] = spec.get('cxmfprodnum') or None
+            if not result.get('size_info'):
+                result['size_info'] = spec.get('cxtypedsg') or None
 
     return result
 
