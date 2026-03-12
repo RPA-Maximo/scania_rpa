@@ -103,9 +103,41 @@ def ensure_po_columns(cursor):
                               "VARCHAR(100) NULL COMMENT '目标货柜'")
 
 
+def ensure_company_cache_table(cursor):
+    """
+    创建 company_cache 表（不存在时创建，已存在时跳过）。
+
+    用途：缓存 Maximo 公司/供应商名称和地址。
+    当 MXAPIVENDOR OSLC 接口因权限问题返回 BMXAA0024E 时，
+    同步流程从此本地表取数据，填充 PO 头的 supplier_name/supplier_address 等字段。
+
+    该表通过 /api/vendor-cache API 管理（增删查改）。
+    """
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS `company_cache` (
+            `company_code`  VARCHAR(50)  NOT NULL COMMENT 'Maximo 公司代码（vendor/billto）',
+            `name`          VARCHAR(255) NULL     COMMENT '公司名称',
+            `address1`      VARCHAR(500) NULL     COMMENT '地址1',
+            `address2`      VARCHAR(500) NULL     COMMENT '地址2',
+            `city`          VARCHAR(100) NULL     COMMENT '城市',
+            `stateprovince` VARCHAR(100) NULL     COMMENT '省/州',
+            `zip`           VARCHAR(20)  NULL     COMMENT '邮政编码',
+            `country`       VARCHAR(100) NULL     COMMENT '国家',
+            `phone1`        VARCHAR(50)  NULL     COMMENT '电话',
+            `email1`        VARCHAR(200) NULL     COMMENT '电子邮件',
+            `contact`       VARCHAR(100) NULL     COMMENT '联系人',
+            `updated_at`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                         ON UPDATE CURRENT_TIMESTAMP
+                                         COMMENT '最后更新时间',
+            PRIMARY KEY (`company_code`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+          COMMENT='公司/供应商本地缓存（MXAPIVENDOR 无权限时的备用数据源）'
+    """)
+
+
 def init_schema(conn):
     """
-    执行数据库 schema 初始化（添加缺失字段）
+    执行数据库 schema 初始化（添加缺失字段 + 创建辅助表）
 
     Args:
         conn: MySQL 连接对象（调用方负责打开和关闭）
@@ -113,6 +145,7 @@ def init_schema(conn):
     cursor = conn.cursor()
     try:
         ensure_po_columns(cursor)
+        ensure_company_cache_table(cursor)
         conn.commit()
     finally:
         cursor.close()

@@ -28,6 +28,7 @@ from api.routers.mr import router as mr_router
 from api.routers.items import router as items_router
 from api.routers.material_location import router as material_location_router
 from api.routers.vendor import router as vendor_router
+from api.routers.vendor_cache import router as vendor_cache_router
 from api.routers.warehouse import router as warehouse_router
 from src.sync.po_sync_service import po_sync_scheduler
 from src.sync.item_sync import item_sync_scheduler
@@ -74,6 +75,7 @@ app.include_router(mr_router)
 app.include_router(items_router)
 app.include_router(material_location_router)
 app.include_router(vendor_router)
+app.include_router(vendor_cache_router)
 app.include_router(warehouse_router)
 
 # 静态文件（前端页面）
