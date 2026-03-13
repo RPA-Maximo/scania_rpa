@@ -36,16 +36,17 @@ ITEM_SELECT = (
 
 # PO 行 model_num / size_info 填充所需的物料规格字段
 #
-# UI 对照（CN4876 PO行截图）：
-#   Maximo 列 "型号"      = M10*100       ← catalogcode（螺栓类完整尺寸）
-#                         = ITB-P31-12-10 ← cxtypedsg（工具类型号，catalogcode 为空时 fallback）
-#   Maximo 列 "尺寸/质量" = ISO4762 A2-70 ← cxmfprodnum（材料/质量标准代号）
+# MXAPIITEM 实测（itemnum=20398605，CN4876 PO行截图验证）：
+#   cxtypedsg        = "M10*100"       → model_num（型号，UI 完全一致）
+#   cxdimensionquality = "ISO4762 A2-70" → size_info（尺寸/质量，UI 完全一致）
+#   cxmfprodnum      = "M10*100"       （与 cxtypedsg 相同，非质量标准字段）
+#   cxadditionaldata = "ISO4762 A2-70" （size_info 备用字段）
 #
-# catalogcode → model_num 首选（螺栓类：M10*100）
-# cxtypedsg   → model_num fallback（工具类：ITB-P31-12-10，catalogcode 为空时使用）
-# cxmfprodnum → size_info（材料/质量标准：ISO4762 A2-70）
-# description → size_info fallback（"中文/English" 格式解析）
-ITEM_SPEC_SELECT = "itemnum,cxtypedsg,cxmfprodnum,cxmanufct,catalogcode,description"
+# cxtypedsg        → model_num（首选）
+# cxdimensionquality → size_info（首选）
+# cxadditionaldata → size_info fallback（cxdimensionquality 为空时）
+# description      → size_info fallback（最终兜底，解析含 "-" 的产品代码）
+ITEM_SPEC_SELECT = "itemnum,cxtypedsg,cxmfprodnum,cxmanufct,catalogcode,description,cxdimensionquality,cxadditionaldata"
 
 
 def _normalize(data: dict) -> dict:
@@ -237,11 +238,13 @@ def fetch_item_specs(item_numbers: List[str]) -> Dict[str, Any]:
                 num = item.get("itemnum")
                 if num:
                     result[num] = {
-                        "cxtypedsg":   item.get("cxtypedsg")   or None,   # 型号（UI 验证字段）
-                        "cxmfprodnum": item.get("cxmfprodnum") or None,   # 制造商产品编号
-                        "cxmanufct":   item.get("cxmanufct")   or None,   # 制造商
-                        "catalogcode": item.get("catalogcode") or None,   # 规格代码（size_info 候选）
-                        "description": item.get("description") or None,   # 物料描述（size_info fallback）
+                        "cxtypedsg":          item.get("cxtypedsg")          or None,  # 型号（UI 验证：M10*100）
+                        "cxdimensionquality": item.get("cxdimensionquality") or None,  # 尺寸/质量（UI 验证：ISO4762 A2-70）
+                        "cxadditionaldata":   item.get("cxadditionaldata")   or None,  # 尺寸/质量备用字段
+                        "cxmfprodnum":        item.get("cxmfprodnum")        or None,  # 制造商产品编号
+                        "cxmanufct":          item.get("cxmanufct")          or None,  # 制造商
+                        "catalogcode":        item.get("catalogcode")        or None,  # 规格代码
+                        "description":        item.get("description")        or None,  # 物料描述（兜底）
                     }
         except Exception as e:
             print(f"[WARN] fetch_item_specs: 批次 {batch_num} 异常: {e}")

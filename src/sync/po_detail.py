@@ -144,32 +144,26 @@ def map_line_data(
     # poline 中 catalogcode/newitemdesc 均为 null 或不存在（Maximo 实测），
     # 从 MXAPIITEM 读取规格数据。
     #
-    # UI 对照（CN4876 PO行截图）：
-    #   Maximo 列 "型号"      = M10*100       ← MXAPIITEM.catalogcode（完整尺寸规格）
-    #   Maximo 列 "尺寸/质量" = ISO4762 A2-70 ← MXAPIITEM.cxmfprodnum（材料/质量标准）
-    #
-    # model_num 优先级：
-    #   catalogcode（螺栓类：M10*100）> cxtypedsg（工具类：ITB-P31-12-10）
-    # size_info 优先级：
-    #   cxmfprodnum（质量标准：ISO4762 A2-70）> description 解析（兜底）
+    # MXAPIITEM 实测（itemnum=20398605，与 Maximo UI PO行列完全对照）：
+    #   cxtypedsg          = "M10*100"       → model_num（Maximo UI "型号" 列）
+    #   cxdimensionquality = "ISO4762 A2-70" → size_info（Maximo UI "尺寸/质量" 列）
+    #   cxadditionaldata   = "ISO4762 A2-70" → size_info 备用（cxdimensionquality 为空时）
     if item_spec_map:
         item_num = line_data.get('itemnum')
         if item_num:
             spec = item_spec_map.get(item_num, {})
             if not result.get('model_num'):
-                # 螺栓类：catalogcode = "M10*100"（完整型号）
-                # 工具类：catalogcode 为空，退 cxtypedsg = "ITB-P31-12-10"
-                result['model_num'] = (
-                    spec.get('catalogcode') or spec.get('cxtypedsg') or None
-                )
+                result['model_num'] = spec.get('cxtypedsg') or None
 
             if not result.get('size_info'):
-                # 标准件：cxmfprodnum = "ISO4762 A2-70"（材料/质量标准）
-                size = spec.get('cxmfprodnum') or None
-                # fallback：description 解析（工具类含 "-" 的产品代码等）
-                if not size:
-                    size = _extract_size_from_desc(spec.get('description') or '')
-                result['size_info'] = size or None
+                # 首选 cxdimensionquality，备用 cxadditionaldata，最后解析 description
+                size = (
+                    spec.get('cxdimensionquality')
+                    or spec.get('cxadditionaldata')
+                    or _extract_size_from_desc(spec.get('description') or '')
+                    or None
+                )
+                result['size_info'] = size
 
     return result
 
