@@ -2,6 +2,7 @@
 采购订单明细同步模块
 负责 purchase_order_bd 明细表的数据同步
 """
+import re
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -12,6 +13,51 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.utils.db import generate_id
 from src.utils.mapper import PO_LINE_MAPPING
+
+
+def _extract_size_from_desc(desc: str):
+    """
+    从物料描述中提取尺寸/规格字段。
+
+    支持两种模式：
+      1. 英文部分含连字符  → 产品规格代码，如 "工具/ITB-A61-40-10" → "ITB-A61-40-10"
+      2. 描述首词匹配规格模式 → 线程/螺纹尺寸，如 "M10 内六角螺栓/..." → "M10"
+         规格模式：字母开头后紧跟数字（M10, M12, G1/4, NPT1 等）
+
+    Args:
+        desc: Maximo description 字段，格式通常为 "中文描述/English description"
+
+    Returns:
+        提取到的尺寸字符串，或 None
+    """
+    if not desc:
+        return None
+
+    if '/' in desc:
+        chin_part, eng_part = desc.split('/', 1)
+        eng_part = eng_part.strip()
+
+        # 优先：英文部分含连字符 → 产品规格代码（如 "ITB-A61-40-10"）
+        if '-' in eng_part:
+            return eng_part
+
+        # 次选：描述首词匹配 [字母][数字] 开头的规格模式（如 "M10", "M12", "G1"）
+        chin_first = chin_part.strip().split()[0] if chin_part.strip() else ''
+        if chin_first and re.match(r'^[A-Za-z]\d', chin_first):
+            return chin_first
+
+        # 也检查英文部分的首词（描述格式为 "英文/中文" 时）
+        eng_first = eng_part.split()[0] if eng_part else ''
+        if eng_first and re.match(r'^[A-Za-z]\d', eng_first):
+            return eng_first
+
+    else:
+        # 无 "/" 时：整体首词匹配规格模式
+        first_token = desc.strip().split()[0] if desc.strip() else ''
+        if first_token and re.match(r'^[A-Za-z]\d', first_token):
+            return first_token
+
+    return None
 
 
 def get_warehouse_id(cursor, warehouse_code: str) -> int:
@@ -95,10 +141,14 @@ def map_line_data(
     )
 
     # model_num / size_info：
-    # catalogcode / newitemdesc 在 poline 中不维护数据，从 MXAPIITEM 读取：
-    #   cxtypedsg   → model_num（型号，UI 验证：与 Maximo PO行"型号"列完全一致）
-    #   catalogcode → size_info 首选（MXAPIITEM 规格代码）
-    #   description → size_info 备选（取 "/" 后半部分，例如 "工具/ITB-A61-40-10" → "ITB-A61-40-10"）
+    # poline 中 catalogcode/newitemdesc 均为 null 或不存在（Maximo 实测），
+    # 从 MXAPIITEM 读取规格数据，再回退到 poline 自身的 description 字段：
+    #
+    #   model_num  ← MXAPIITEM.cxtypedsg（型号，UI 验证字段）
+    #   size_info  ← 优先级：
+    #     1. MXAPIITEM.catalogcode（规格代码，若有值直接使用）
+    #     2. MXAPIITEM.description 解析（含 "-" 的英文产品代码 或 M10/M12 等规格前缀）
+    #     3. poline 自身 description 解析（同上规则，作为最终兜底）
     if item_spec_map:
         item_num = line_data.get('itemnum')
         if item_num:
@@ -107,19 +157,17 @@ def map_line_data(
                 result['model_num'] = spec.get('cxtypedsg') or None
 
             if not result.get('size_info'):
-                # 优先用 MXAPIITEM.catalogcode
-                size = spec.get('catalogcode')
-                # fallback：从物料描述的 "/" 后半部分提取规格代码
+                # 1. MXAPIITEM.catalogcode
+                size = spec.get('catalogcode') or None
+                # 2. MXAPIITEM.description 解析
                 if not size:
-                    item_desc = spec.get('description') or ''
-                    if '/' in item_desc:
-                        eng_part = item_desc.split('/', 1)[1].strip()
-                        # 只有包含连字符的才是真正的产品规格代码
-                        # （如 "ITB-A61-40-10"、"BCP BL-12-I06"）
-                        # 纯英文描述（"Tightening tool"、"Nut runner"）→ NA/null
-                        if '-' in eng_part:
-                            size = eng_part
+                    size = _extract_size_from_desc(spec.get('description') or '')
                 result['size_info'] = size or None
+
+    # 3. 最终兜底：poline 自身 description 字段解析
+    if not result.get('size_info'):
+        poline_desc = line_data.get('description') or ''
+        result['size_info'] = _extract_size_from_desc(poline_desc) or None
 
     return result
 

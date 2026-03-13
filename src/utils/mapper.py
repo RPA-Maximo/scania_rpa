@@ -76,8 +76,11 @@ PO_LINE_MAPPING = {
     'unitcost': 'unit_cost',
     'polinediscpct': 'discount_pct',    # 折扣%
     'linecost': 'line_cost',
-    'catalogcode': 'model_num',         # 型号
-    'newitemdesc': 'size_info',         # 尺寸/规格
+    # 注意：catalogcode 和 newitemdesc 在 poline API 中均为 null 或不存在
+    # model_num 由 MXAPIITEM.cxtypedsg 填充（见 map_line_data）
+    # size_info 由 MXAPIITEM.catalogcode / description 解析填充（见 map_line_data）
+    'catalogcode': 'model_num',         # 型号（poline 层恒为 null，留作字段占位）
+    'newitemdesc': 'size_info',         # 尺寸/规格（poline 不含此字段，留作字段占位）
     'itemnum': 'item_code',             # 物料编号（原始字符串，始终保留）
     'location': 'target_container',     # 目标货柜
     # 'currency' 优先取行级字段，fallback 到 PO 头 currencycode（在 map_line_data 中处理）
