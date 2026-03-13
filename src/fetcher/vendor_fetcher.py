@@ -190,7 +190,14 @@ def _discover_company_api(headers: dict, sample_code: str) -> Optional[str]:
             if resp.status_code == 200:
                 data = resp.json()
                 members = data.get("member") or data.get("rdfs:member") or []
-                print(f"[INFO] _discover_company_api: {api_name} → HTTP 200, {len(members)} 条")
+                # 打印返回的 company 键，用于核实与 MXAPIPO.vendor 字段的一致性
+                if members:
+                    sample = _normalize(members[0])
+                    returned_key = sample.get("company", "(无 company 字段)")
+                    print(f"[INFO] _discover_company_api: {api_name} → HTTP 200, "
+                          f"{len(members)} 条，样本 company='{returned_key}'（查询键='{sample_code}'）")
+                else:
+                    print(f"[INFO] _discover_company_api: {api_name} → HTTP 200, 0 条（code={sample_code} 无记录）")
                 _working_company_api = api_name
                 return api_name
             else:
