@@ -201,11 +201,11 @@ async def export_po_excel(
                 supplier_contact  AS `供应商联系人`,
                 supplier_phone    AS `供应商联系电话`,
                 supplier_email    AS `供应商邮箱`,
-                company_name      AS `公司名称`,
-                street_address    AS `街道地址`,
-                postal_code       AS `邮政编码`,
-                city              AS `城市`,
-                country           AS `国家`,
+                company_name      AS `收款方公司名称`,
+                street_address    AS `收款方街道地址`,
+                postal_code       AS `收款方邮政编码`,
+                city              AS `收款方城市`,
+                country           AS `收款方国家`,
                 create_time       AS `同步时间`
             FROM purchase_order
             WHERE del_flag = 0
