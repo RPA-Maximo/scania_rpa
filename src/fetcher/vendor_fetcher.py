@@ -35,6 +35,19 @@ COMPANY_DETAIL_SELECT = (
     "phone1,email1,contact"
 )
 
+# MXAPIVENDOR 权限不足时的备选 API（按优先级排列）
+# BMXAA0024E "对象 COMPANIES 上不允许 READ 操作" → 依次探测备选
+_COMPANY_API_CANDIDATES = [
+    "MXAPIVENDOR",
+    "MXAPICOMPANY",
+    "MXAPICO",
+    "MXAPIADDRESS",
+    "MXAPICOMPADDR",
+]
+
+# 运行期缓存：已探测到的可用 API 名（None = 尚未探测）
+_working_company_api: Optional[str] = None
+
 
 def _normalize(data: dict) -> dict:
     result = {}
@@ -151,9 +164,50 @@ def fetch_vendors(
     return all_data
 
 
+def _discover_company_api(headers: dict, sample_code: str) -> Optional[str]:
+    """
+    依次探测备选 API，返回第一个能正常返回数据的 API 名称。
+    HTTP 200 且 member 非空 → 可用；HTTP 400/403/404 → 跳过。
+    """
+    global _working_company_api
+    if _working_company_api is not None:
+        return _working_company_api
+
+    for api_name in _COMPANY_API_CANDIDATES:
+        url = f"{MAXIMO_BASE_URL}/oslc/os/{api_name}"
+        params = {
+            "oslc.select":   COMPANY_DETAIL_SELECT,
+            "oslc.where":    f'company="{sample_code}"',
+            "oslc.pageSize": 1,
+            "_dropnulls":    0,
+        }
+        try:
+            resp = requests.get(
+                url, headers=headers, params=params,
+                verify=VERIFY_SSL, proxies=settings_manager.get_proxies(),
+                timeout=30,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                members = data.get("member") or data.get("rdfs:member") or []
+                print(f"[INFO] _discover_company_api: {api_name} → HTTP 200, {len(members)} 条")
+                _working_company_api = api_name
+                return api_name
+            else:
+                err_snippet = resp.text[:120].replace('\n', ' ')
+                print(f"[INFO] _discover_company_api: {api_name} → HTTP {resp.status_code} ({err_snippet})")
+        except Exception as e:
+            print(f"[INFO] _discover_company_api: {api_name} → 异常: {e}")
+
+    print("[WARN] _discover_company_api: 所有候选 API 均不可用，公司详情将为空")
+    _working_company_api = ""   # 空字符串 = 已探测但无可用 API
+    return None
+
+
 def fetch_company_details_from_api(company_codes: List[str]) -> Dict[str, Any]:
     """
-    从 MXAPIVENDOR 批量查询公司详细信息（名称、地址、联系方式）。
+    批量查询公司详细信息（名称、地址、联系方式）。
+    自动探测可用 API：优先 MXAPIVENDOR，权限不足时依次尝试备选。
     与 fetch_item_specs() 模式相同：按批次查询，结果写入 company_cache 持久化。
 
     Args:
@@ -175,6 +229,14 @@ def fetch_company_details_from_api(company_codes: List[str]) -> Dict[str, Any]:
         print(f"[WARN] fetch_company_details_from_api: 认证失败，跳过公司详情查询: {e}")
         return {}
 
+    # 自动发现可用 API（结果缓存在模块级变量，只探测一次）
+    api_name = _discover_company_api(headers, deduped[0])
+    if not api_name:
+        return {}
+
+    api_url = f"{MAXIMO_BASE_URL}/oslc/os/{api_name}"
+    print(f"[INFO] fetch_company_details_from_api: 使用 {api_name}")
+
     BATCH_SIZE = 20
     result: Dict[str, Any] = {}
 
@@ -193,7 +255,7 @@ def fetch_company_details_from_api(company_codes: List[str]) -> Dict[str, Any]:
         }
         try:
             resp = requests.get(
-                VENDOR_API_URL,
+                api_url,
                 headers=headers,
                 params=params,
                 verify=VERIFY_SSL,

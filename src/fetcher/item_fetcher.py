@@ -214,40 +214,49 @@ def fetch_item_specs(item_numbers: List[str]) -> Dict[str, Any]:
             "_dropnulls":    0,
             "oslc.where":    where_clause,
         }
-        try:
-            resp = requests.get(
-                ITEM_API_URL,
-                headers=headers,
-                params=params,
-                verify=VERIFY_SSL,
-                proxies=settings_manager.get_proxies(),
-                timeout=REQUEST_TIMEOUT,
-            )
-            if resp.status_code != 200:
-                print(
-                    f"[WARN] fetch_item_specs: 批次 {batch_num} "
-                    f"HTTP {resp.status_code} — {resp.text[:200]}"
+        # SSL EOF / 连接异常时最多重试 3 次，指数退避
+        MAX_RETRIES = 3
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                resp = requests.get(
+                    ITEM_API_URL,
+                    headers=headers,
+                    params=params,
+                    verify=VERIFY_SSL,
+                    proxies=settings_manager.get_proxies(),
+                    timeout=REQUEST_TIMEOUT,
                 )
-                continue
-            data = resp.json()
-            members = data.get("member") or data.get("rdfs:member") or []
-            if not members:
-                print(f"[WARN] fetch_item_specs: 批次 {batch_num} 返回 0 条（items={batch[:3]}...）")
-            for raw in members:
-                item = _normalize(raw)
-                num = item.get("itemnum")
-                if num:
-                    result[num] = {
-                        "cxtypedsg":          item.get("cxtypedsg")          or None,  # 型号（UI 验证：M10*100）
-                        "cxdimensionquality": item.get("cxdimensionquality") or None,  # 尺寸/质量（UI 验证：ISO4762 A2-70）
-                        "cxadditionaldata":   item.get("cxadditionaldata")   or None,  # 尺寸/质量备用字段
-                        "cxmfprodnum":        item.get("cxmfprodnum")        or None,  # 制造商产品编号
-                        "cxmanufct":          item.get("cxmanufct")          or None,  # 制造商
-                        "catalogcode":        item.get("catalogcode")        or None,  # 规格代码
-                        "description":        item.get("description")        or None,  # 物料描述（兜底）
-                    }
-        except Exception as e:
-            print(f"[WARN] fetch_item_specs: 批次 {batch_num} 异常: {e}")
+                if resp.status_code != 200:
+                    print(
+                        f"[WARN] fetch_item_specs: 批次 {batch_num} "
+                        f"HTTP {resp.status_code} — {resp.text[:200]}"
+                    )
+                    break
+                data = resp.json()
+                members = data.get("member") or data.get("rdfs:member") or []
+                if not members:
+                    print(f"[WARN] fetch_item_specs: 批次 {batch_num} 返回 0 条（items={batch[:3]}...）")
+                for raw in members:
+                    item = _normalize(raw)
+                    num = item.get("itemnum")
+                    if num:
+                        result[num] = {
+                            "cxtypedsg":          item.get("cxtypedsg")          or None,  # 型号（UI 验证：M10*100）
+                            "cxdimensionquality": item.get("cxdimensionquality") or None,  # 尺寸/质量（UI 验证：ISO4762 A2-70）
+                            "cxadditionaldata":   item.get("cxadditionaldata")   or None,  # 尺寸/质量备用字段
+                            "cxmfprodnum":        item.get("cxmfprodnum")        or None,  # 制造商产品编号
+                            "cxmanufct":          item.get("cxmanufct")          or None,  # 制造商
+                            "catalogcode":        item.get("catalogcode")        or None,  # 规格代码
+                            "description":        item.get("description")        or None,  # 物料描述（兜底）
+                        }
+                break  # 成功，退出重试循环
+            except Exception as e:
+                if attempt < MAX_RETRIES:
+                    wait = 2 ** attempt  # 2s, 4s
+                    print(f"[WARN] fetch_item_specs: 批次 {batch_num} 第 {attempt} 次失败({e})，{wait}s 后重试")
+                    time.sleep(wait)
+                else:
+                    print(f"[WARN] fetch_item_specs: 批次 {batch_num} 全部 {MAX_RETRIES} 次重试失败: {e}")
 
         time.sleep(REQUEST_DELAY)
 
