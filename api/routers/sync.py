@@ -197,7 +197,6 @@ async def export_po_excel(
                 supplier_address  AS `供应商地址`,
                 supplier_zip      AS `供应商邮政编码`,
                 supplier_city     AS `供应商城市`,
-                supplier_country  AS `供应商国家`,
                 supplier_contact  AS `供应商联系人`,
                 supplier_phone    AS `供应商联系电话`,
                 supplier_email    AS `供应商邮箱`,
