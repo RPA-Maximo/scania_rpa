@@ -18,7 +18,7 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.sync.company_cache import (
     load_company_cache,
@@ -32,6 +32,16 @@ router = APIRouter(prefix="/api/vendor-cache", tags=["公司名称缓存"])
 
 
 # ── Pydantic 模型 ─────────────────────────────────────────────────────────────
+
+class ScrapeRequest(BaseModel):
+    company_codes: Optional[List[str]] = Field(
+        None,
+        description=(
+            "指定要抓取的公司代码列表（vendor code / billto code）。"
+            "不填则自动从 purchase_order 表中找 supplier_name 为空的 vendor_code。"
+        ),
+    )
+
 
 class CompanyEntry(BaseModel):
     company_code:  str
@@ -172,6 +182,85 @@ def batch_upsert_cache(entries: List[CompanyEntry]):
     if failed:
         result["failed"] = failed
     return result
+
+
+@router.post("/scrape", summary="通过浏览器自动抓取公司详情到缓存")
+async def scrape_company_to_cache(request: ScrapeRequest = None):
+    """
+    利用本地已登录的 Edge/Chrome debug 实例（CDP port 9223）自动从 Maximo 抓取公司详情，
+    写入 company_cache 表，下次 PO 同步时自动填充供应商/收款方字段。
+
+    **原理**：MXAPIVENDOR OSLC 接口对 API 账号要求 COMPANIES READ 权限，
+    而本地浏览器登录的人工账号具有该权限。通过 Playwright CDP 在浏览器上下文中
+    发起请求，可绕过 API 账号的权限限制。
+
+    **前置条件**：
+    - 本地运行 Edge/Chrome 并以 `--remote-debugging-port=9223` 启动
+    - 浏览器已登录 Maximo（人工账号需具有 COMPANIES READ 权限）
+
+    **两种模式**：
+    - 提供 `company_codes`：抓取指定代码列表
+    - 不提供：自动检测 purchase_order 表中 supplier_name 为空的 vendor_code
+    """
+    import asyncio
+    from src.fetcher.company_browser_fetcher import fetch_company_details_via_browser
+
+    # 1. 确定需要抓取的代码
+    if request and request.company_codes:
+        codes = list(dict.fromkeys(request.company_codes))
+    else:
+        # 自动检测：找 purchase_order 表中 supplier_name 为空的 vendor_code
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "SELECT DISTINCT vendor_code FROM purchase_order "
+                "WHERE vendor_code IS NOT NULL AND (supplier_name IS NULL OR supplier_name = '') "
+                "AND del_flag = 0"
+            )
+            codes = [row[0] for row in cur.fetchall()]
+        finally:
+            cur.close()
+            conn.close()
+
+    if not codes:
+        return {"success": True, "message": "没有需要补全的公司代码", "scraped": 0, "saved": 0}
+
+    # 2. 通过 CDP 浏览器抓取
+    scraped = await fetch_company_details_via_browser(codes)
+
+    if not scraped:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "浏览器抓取失败。请确认：\n"
+                "1. Edge/Chrome 已以 --remote-debugging-port=9223 启动\n"
+                "2. 浏览器已登录 Maximo 且账号具有 COMPANIES READ 权限"
+            ),
+        )
+
+    # 3. 写入 company_cache
+    conn = get_connection()
+    cur = conn.cursor()
+    saved = 0
+    try:
+        for code, detail in scraped.items():
+            ok = upsert_company(cur, code, **detail)
+            if ok:
+                saved += 1
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    return {
+        "success": True,
+        "queried": len(codes),
+        "scraped": len(scraped),
+        "saved": saved,
+        "codes": list(scraped.keys()),
+        "message": f"成功抓取并缓存 {saved} 条公司信息，下次 PO 同步时自动填充",
+    }
 
 
 @router.delete("/{company_code}", summary="删除公司名称缓存")
