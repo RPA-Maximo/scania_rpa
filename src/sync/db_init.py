@@ -2,10 +2,8 @@
 数据库表结构初始化
 安全地为 purchase_order 和 purchase_order_bd 添加新字段（如已存在则跳过）
 
-字段取舍依据（见字段映射表）：
-  - 供应商国家      → 不抓（供应商国家不拉）
+字段取舍依据：
   - 斯堪尼亚客户代码 → 不填
-  - 联系人/联系电话/电子邮件/接收人 → 不抓默认表信息
   以上字段不在此处建列；历史数据库中若已存在这些列，保留为 NULL 即可。
 """
 import sys
@@ -57,7 +55,8 @@ def ensure_po_columns(cursor):
                               "VARCHAR(100) NULL COMMENT '供应商城市'")
     _add_column_if_not_exists(cursor, 'purchase_order', 'supplier_state',
                               "VARCHAR(100) NULL COMMENT '供应商省/区'")
-    # supplier_country → 不抓，不建列
+    _add_column_if_not_exists(cursor, 'purchase_order', 'supplier_country',
+                              "VARCHAR(100) NULL COMMENT '供应商国家'")
     _add_column_if_not_exists(cursor, 'purchase_order', 'supplier_contact',
                               "VARCHAR(100) NULL COMMENT '供应商联系人'")
     _add_column_if_not_exists(cursor, 'purchase_order', 'supplier_phone',

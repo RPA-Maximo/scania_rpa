@@ -135,7 +135,7 @@ def map_header_data(cursor, po_data: Dict, vendor_detail_map: Dict = None) -> Di
     result['supplier_zip']       = _first_nonempty(po_data, vc['supplier_zip']) or None
     result['supplier_city']      = _first_nonempty(po_data, vc['supplier_city']) or None
     result['supplier_state']     = _first_nonempty(po_data, vc['supplier_state']) or None
-    # supplier_country 不抓（供应商国家不拉）
+    result['supplier_country']   = None  # MXAPIPO 不含供应商国家，由 vendor_detail_map fallback 填充
     result['supplier_contact']   = _first_nonempty(po_data, vc['supplier_contact']) or None
     result['supplier_phone']     = _safe_phone(_first_nonempty(po_data, vc['supplier_phone']))
     result['supplier_email']     = _first_nonempty(po_data, vc['supplier_email']) or None
@@ -183,6 +183,8 @@ def map_header_data(cursor, po_data: Dict, vendor_detail_map: Dict = None) -> Di
                 result['supplier_city']   = vd.get('city')
             if not result.get('supplier_state'):
                 result['supplier_state']  = vd.get('stateprovince')
+            if not result.get('supplier_country'):
+                result['supplier_country'] = vd.get('country')
             if not result.get('supplier_contact'):
                 result['supplier_contact'] = vd.get('contact')
             if not result.get('supplier_phone'):
