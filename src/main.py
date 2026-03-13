@@ -20,10 +20,10 @@ from src.utils.db import get_connection
 # 配置选项
 CONFIG = {
     # 数据获取模式
-    'fetch_mode': 'file',           # 'file': 从文件加载, 'api': 从API抓取
+    'fetch_mode': 'api',            # 'file': 从文件加载, 'api': 从API抓取
     'po_numbers': None,             # API模式: 指定订单号列表，如 ['CN5123', 'CN5124']
-    'status_filter': None,          # API模式: 状态筛选，如 'APPR'
-    'max_pages': 1,                 # API模式: 最大页数
+    'status_filter': 'APPR',       # API模式: 状态筛选，只拉已审批订单
+    'max_pages': 10,                # API模式: 最大页数
     'page_size': 20,                # API模式: 每页数量
     
     # 数据同步选项
