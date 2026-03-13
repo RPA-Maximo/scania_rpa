@@ -42,6 +42,9 @@ from .config import SELECTORS, COLUMNS, WAIT_TIMES, LIMITS
 # 工具函数（可选导出）
 from .utils import trigger_input_events, escape_js_string, wait_for_condition
 
+# 供应商/公司信息 RPA 抓取
+from .vendor_operations import rpa_fetch_vendor_details, fetch_company_details_via_rpa
+
 
 __all__ = [
     # 浏览器
@@ -76,4 +79,8 @@ __all__ = [
     'trigger_input_events',
     'escape_js_string',
     'wait_for_condition',
+
+    # 供应商/公司信息 RPA 抓取
+    'rpa_fetch_vendor_details',
+    'fetch_company_details_via_rpa',
 ]

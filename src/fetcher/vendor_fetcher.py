@@ -279,6 +279,21 @@ def fetch_vendor_details(company_codes: List[str]) -> Dict[str, Any]:
             print(f"[WARN] fetch_vendor_details: 写入本地缓存失败: {e}")
         result.update(api_found)
 
+    # ── 阶段 3：MXAPIVENDOR 仍有缺口 → 通过 RPA 浏览器抓取 ─────────────────
+    still_missing = [c for c in deduped if c not in result]
+    if still_missing:
+        print(f"[INFO] fetch_vendor_details: 尝试 RPA 浏览器抓取 {len(still_missing)} 个公司")
+        try:
+            from rpa.vendor_operations import rpa_fetch_vendor_details
+            rpa_result = rpa_fetch_vendor_details(still_missing, write_to_cache=True)
+            if rpa_result:
+                result.update(rpa_result)
+                print(f"[INFO] fetch_vendor_details: RPA 成功抓取 {len(rpa_result)} 条")
+            else:
+                print("[WARN] fetch_vendor_details: RPA 未返回数据（浏览器未启动或页面无数据）")
+        except Exception as e:
+            print(f"[WARN] fetch_vendor_details: RPA 抓取跳过: {e}")
+
     total_missing = len(deduped) - len(result)
     print(
         f"[INFO] fetch_vendor_details: 查询 {len(deduped)} 个公司，获得 {len(result)} 条"

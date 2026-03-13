@@ -194,6 +194,10 @@ def map_header_data(cursor, po_data: Dict, vendor_detail_map: Dict = None) -> Di
             if not result.get('contact_email'):
                 result['contact_email']   = bd.get('email1')
 
+    # ── 国家默认值：billto 国家为空时默认"中国" ────────────────────────────
+    if not result.get('country'):
+        result['country'] = '中国'
+
     return result
 
 
