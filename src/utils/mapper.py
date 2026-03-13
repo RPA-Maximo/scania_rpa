@@ -21,34 +21,49 @@ PO_HEADER_MAPPING = {
 }
 
 # Maximo MXAPIPO 供应商字段候选名（取第一个非空值）
-# 不同 Maximo 版本字段名可能不同
+#
+# 实测验证（CN5074，102 个返回字段）：
+#   ✓ vendor       → 供应商代码（"8970301"），唯一有值的供应商字段
+#   ✗ vendorname   → 不返回（Maximo 此字段需 COMPANIES READ 权限）
+#   ✗ venaddress1/vencity/venzip 等 → 均不返回（同上）
+#   ✓ cxpoemail    → 如有值则为接收 PO 的邮箱（本实例未见有值）
+#
+# 供应商名称/地址如需填充，通过 POST /api/vendor-cache 手动录入，
+# fetch_vendor_details 会优先查本地 company_cache 表。
 VENDOR_FIELD_CANDIDATES = {
     'vendor_code':        ['vendor'],
-    'supplier_address':   ['venaddress1', 'venaddr1', 'vendoraddr1'],
-    'supplier_address2':  ['venaddress2', 'venaddr2'],          # 供应商地址2
+    # 以下字段在当前实例不返回，保留以备权限开放后自动生效
+    'supplier_address':   ['venaddress1', 'venaddr1'],
+    'supplier_address2':  ['venaddress2', 'venaddr2'],
     'supplier_zip':       ['venzip', 'venpostalcode'],
     'supplier_city':      ['vencity'],
-    'supplier_state':     ['venstate', 'venprovince', 'venregion'],  # 供应商省/区
-    'supplier_country':   ['vencountry', 'vennation'],          # 供应商国家
+    'supplier_state':     ['venstate', 'venprovince'],
     'supplier_contact':   ['vencontact'],
     'supplier_phone':     ['venphone'],
-    'supplier_email':     ['cxpoemail', 'venemail'],            # cxpoemail = 接收PO的邮箱
+    'supplier_email':     ['cxpoemail', 'venemail'],
 }
 
-# Maximo MXAPIPO 收款方（Bill To）+ 内部买方字段候选名
-# 对应 Maximo UI "收货方/收款人" 标签页右侧"收款方"区域
+# Maximo MXAPIPO 收款方（Bill To）字段候选名
+#
+# 实测验证（CN5074）：
+#   ✓ billto       → 收款方代码（"BILLTOCHINA"）
+#   ✓ shipto       → 收货方代码（"0001"）
+#   ✗ billtocomp/billtoaddress1/billtocity 等 → 均不返回（需 company_cache 二次填充）
+#
+# 以下字段按 UI 确认不抓取：
+#   contact_person  → 不抓（联系人不从 Maximo 默认表信息获取）
+#   contact_phone   → 不抓（联系电话不从 Maximo 默认表信息获取）
+#   contact_email   → 不抓
+#   receiver        → 不抓（接收人）
+#   scania_customer_code → 不填
 BILLTO_FIELD_CANDIDATES = {
-    'company_name':         ['billtocomp', 'billtoname'],
-    'street_address_1':     ['billtoaddress1', 'billtoaddr1'],
-    'street_address_2':     ['billtoaddress2', 'billtoaddr2'],
-    'postal_code':          ['billtozip', 'billtopostalcode'],
-    'city':                 ['billtocity'],
-    'country':              ['billtocountry'],                  # 国家（动态拉取，不写死）
-    'contact_person':       ['billtoattn', 'billtocontact'],    # 联系人
-    'contact_phone':        ['billtophone'],                    # 联系电话
-    'contact_email':        ['billtoemail', 'contactemail'],    # 联系邮件
-    'receiver':             ['shiptoattn', 'shiptocontact', 'shiptocomp'],  # 接收人
-    'scania_customer_code': ['buyercode', 'custcode', 'ourreference'],      # 斯堪尼亚客户代码
+    'company_name':         ['billtocomp', 'billtoname'],       # 不返回，由 company_cache 填充
+    'street_address_1':     ['billtoaddress1', 'billtoaddr1'],  # 不返回，由 company_cache 填充
+    'street_address_2':     ['billtoaddress2', 'billtoaddr2'],  # 不返回，由 company_cache 填充
+    'postal_code':          ['billtozip', 'billtopostalcode'],  # 不返回，由 company_cache 填充
+    'city':                 ['billtocity'],                     # 不返回，由 company_cache 填充
+    'country':              ['billtocountry'],                  # 不返回，默认"中国"
+    # contact_person/contact_phone/contact_email/receiver：UI 确认不抓取
 }
 
 # JSON 字段 -> 数据库字段映射 (订单明细)
@@ -61,8 +76,11 @@ PO_LINE_MAPPING = {
     'unitcost': 'unit_cost',
     'polinediscpct': 'discount_pct',    # 折扣%
     'linecost': 'line_cost',
-    'catalogcode': 'model_num',         # 型号
-    'newitemdesc': 'size_info',         # 尺寸/规格
+    # 注意：catalogcode 和 newitemdesc 在 poline API 中均为 null 或不存在
+    # model_num 由 MXAPIITEM.cxtypedsg 填充（见 map_line_data）
+    # size_info 由 MXAPIITEM.catalogcode / description 解析填充（见 map_line_data）
+    'catalogcode': 'model_num',         # 型号（poline 层恒为 null，留作字段占位）
+    'newitemdesc': 'size_info',         # 尺寸/规格（poline 不含此字段，留作字段占位）
     'itemnum': 'item_code',             # 物料编号（原始字符串，始终保留）
     'location': 'target_container',     # 目标货柜
     # 'currency' 优先取行级字段，fallback 到 PO 头 currencycode（在 map_line_data 中处理）

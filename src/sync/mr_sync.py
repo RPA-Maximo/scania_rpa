@@ -49,7 +49,7 @@ def _parse_header(raw: Dict) -> Dict:
         "usage_type":     raw.get("invuselinetype") or "ISSUE",
         "warehouse":      raw.get("storeloc") or "",
         "site":           raw.get("siteid") or "",
-        "target_address": raw.get("siteid") or "",        # 目标地址暂用地点，后续客户补充
+        "target_address": raw.get("chargeto") or "",      # 目标地址 = 发放目标（chargeto，如WYAVW6）
         "required_date":  _safe_date(raw.get("requireddate")),
         "status":         raw.get("status") or "",
         "cost_center":    raw.get("costcenter") or "",    # 成本中心
@@ -71,6 +71,7 @@ def _parse_lines(raw_lines: List[Dict], header_id: int) -> List[Dict]:
       transdate      → 运输日期
       binnum         → 原货柜（仓位）
       wonum          → 工单号（WO）
+      commoditygroup → 商品组（39000000=化学品，需特殊处理）
       glcreditacct   → GL贷方科目（如 K-546110-36192）
       chargeto       → 发放目标（如 WYAVW6）
       costcenter     → 成本中心（如 36192）
@@ -101,6 +102,7 @@ def _parse_lines(raw_lines: List[Dict], header_id: int) -> List[Dict]:
             "unit":              "PCS",
             "bin_location":      line.get("binnum") or "",
             "wo_number":         line.get("wonum") or "",
+            "commodity_group":   line.get("commoditygroup") or "",
             "gl_credit_account": line.get("glcreditacct") or "",
             "charge_to":         line.get("chargeto") or "",
             "cost_center":       line.get("costcenter") or "",
@@ -235,13 +237,13 @@ def sync_mr_from_maximo(
                             (id, header_id, line_number, usage_type, item_number,
                              description, current_balance, available_qty, required_qty,
                              transport_date, unit, bin_location, wo_number,
-                             gl_credit_account, charge_to, cost_center,
+                             commodity_group, gl_credit_account, charge_to, cost_center,
                              reserve_num, reserve_type, line_request_num,
                              request_line, required_date, requester,
                              maximo_lineid, create_time)
                            VALUES
                             (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                             %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())""",
+                             %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())""",
                         (
                             line_id,
                             line["header_id"],
@@ -256,6 +258,7 @@ def sync_mr_from_maximo(
                             line["unit"],
                             line["bin_location"],
                             line["wo_number"],
+                            line["commodity_group"],
                             line["gl_credit_account"],
                             line["charge_to"],
                             line["cost_center"],

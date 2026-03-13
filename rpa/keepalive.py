@@ -239,7 +239,7 @@ class KeepaliveManager:
                 [sys.executable, str(worker_script)],
                 capture_output=True,
                 text=True,
-                timeout=60,  # 1 分钟超时
+                timeout=30,   # 30s 超时（whoami fetch 10s + Playwright 启动/CDP ~15s + 余量）
                 cwd=str(PROJECT_ROOT)
             )
 
@@ -274,6 +274,25 @@ class KeepaliveManager:
             self.last_keepalive_time = time.time()
 
             if keepalive_result.get('success'):
+                # 自动同步浏览器最新认证信息到 auth_manager
+                auth = keepalive_result.get('auth')
+                if auth:
+                    try:
+                        from config.auth_manager import auth_manager
+                        auth_manager.update_from_fields(
+                            cookie=auth['cookie'],
+                            csrf_token=auth['csrf_token'],
+                            refresh_token=auth.get('refresh_token', ''),
+                        )
+                        ka_logger.info(
+                            f"KEEPALIVE #{count} | 🔑 认证信息已自动更新 "
+                            f"(cookie={len(auth['cookie'])}字节)"
+                        )
+                    except Exception as auth_err:
+                        ka_logger.warning(
+                            f"KEEPALIVE #{count} | ⚠ 认证信息同步失败: {auth_err}"
+                        )
+
                 po_count = keepalive_result.get('po_count', 0)
                 ka_logger.info(
                     f"KEEPALIVE #{count} | ✅ SUCCESS | "
@@ -297,14 +316,14 @@ class KeepaliveManager:
             self.last_keepalive_result = {
                 'success': False,
                 'reason': 'timeout',
-                'message': '保活脚本执行超时 (>60s)',
+                'message': '保活脚本执行超时 (>30s)',
                 'po_count': 0
             }
             self.last_keepalive_time = time.time()
             ka_logger.warning(
                 f"KEEPALIVE #{count} | ❌ TIMEOUT | "
                 f"会话已持续: {duration_str} | "
-                f"保活脚本超时 (>60s)"
+                f"保活脚本超时 (>30s)"
             )
 
         except Exception as e:

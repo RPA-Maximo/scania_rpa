@@ -10,55 +10,89 @@ from typing import Dict, List, Optional, Tuple
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.utils.db import generate_id, format_datetime
+from src.utils.db import generate_id, format_datetime, get_connection
 from src.utils.mapper import PO_HEADER_MAPPING, VENDOR_FIELD_CANDIDATES, BILLTO_FIELD_CANDIDATES  # noqa: E501
+
+# 模块级 sys_department 缓存，避免重复查询且不污染主 cursor
+_dept_cache: Dict[str, Optional[int]] = {}
+_dept_cache_loaded: bool = False
+
+
+def _load_dept_cache(vendor_codes: List[str]) -> None:
+    """用独立连接批量预加载 sys_department，结果写入模块级缓存。"""
+    global _dept_cache_loaded
+    if not vendor_codes:
+        return
+    uncached = [c for c in vendor_codes if c not in _dept_cache]
+    if not uncached:
+        return
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            placeholders = ','.join(['%s'] * len(uncached))
+            cur.execute(
+                f"SELECT code, id FROM sys_department "
+                f"WHERE code IN ({placeholders}) AND del_flag=0",
+                uncached,
+            )
+            found = {row[0]: row[1] for row in cur.fetchall()}
+        finally:
+            cur.close()
+            conn.close()
+        for code in uncached:
+            _dept_cache[code] = found.get(code)  # None if not found
+    except Exception as e:
+        print(f"[WARN] sys_department 批量查询失败（跳过 owner_dept_id 填充）: {e}")
+        for code in uncached:
+            _dept_cache.setdefault(code, None)
 
 
 def _first_nonempty(data: dict, keys: list) -> str:
-    """从 data 中按 keys 列表顺序取第一个非空值"""
+    """从 data 中按 keys 列表顺序取第一个非空值，始终返回字符串"""
     for k in keys:
         v = data.get(k)
-        if v and str(v).strip():
+        if v is not None and str(v).strip():
             return str(v).strip()
     return ''
 
 
+def _safe_phone(value: str) -> Optional[str]:
+    """
+    电话号码安全处理：
+    - 保留 + 前缀（避免被数值化后丢失）
+    - 去除首尾空格
+    - 空值返回 None
+    """
+    if not value:
+        return None
+    s = str(value).strip()
+    return s if s else None
+
+
 def get_supplier_info(cursor, vendor_code: str) -> Tuple[Optional[int], Optional[str]]:
     """
-    根据供应商代码查询供应商信息
-    
-    Args:
-        cursor: 数据库游标
-        vendor_code: 供应商代码 (JSON中的vendor字段)
-        
-    Returns:
-        tuple: (supplier_id, supplier_name) 如果未找到返回 (None, None)
+    根据供应商代码查询 sys_department 的 owner_dept_id。
+    使用模块级缓存（独立连接预加载），不触碰传入的主 cursor，
+    避免查询失败时污染主 cursor 导致后续所有操作失败。
     """
     if not vendor_code:
         return None, None
-    
-    try:
-        cursor.execute(
-            "SELECT id, name FROM sys_department WHERE code = %s AND del_flag = 0",
-            (vendor_code,)
-        )
-        result = cursor.fetchone()
-        if result:
-            return result[0], result[1]  # (id, name)
-        return None, None
-    except Exception as e:
-        print(f"  [WARN] 查询供应商信息失败 (code={vendor_code}): {e}")
-        return None, None
+    if vendor_code not in _dept_cache:
+        _load_dept_cache([vendor_code])
+    return _dept_cache.get(vendor_code), None
 
 
-def map_header_data(cursor, po_data: Dict) -> Dict:
+def map_header_data(cursor, po_data: Dict, vendor_detail_map: Dict = None) -> Dict:
     """
     将 JSON 数据映射到数据库字段
-    
+
     Args:
-        cursor: 数据库游标
-        po_data: 采购订单 JSON 数据
-        
+        cursor:            数据库游标
+        po_data:           采购订单 JSON 数据
+        vendor_detail_map: 公司详情字典 {company_code: {name, address1, city, ...}}
+                           由 fetch_vendor_details 返回；为 None 时跳过二次填充
+
     Returns:
         dict: 映射后的数据库字段
     """
@@ -70,10 +104,6 @@ def map_header_data(cursor, po_data: Dict) -> Dict:
     
     # 基础字段映射
     for json_field, db_field in PO_HEADER_MAPPING.items():
-        # 跳过 vendor 字段，后面单独处理
-        if json_field == 'vendor':
-            continue
-            
         value = po_data.get(json_field)
         
         # 日期时间格式化
@@ -105,30 +135,80 @@ def map_header_data(cursor, po_data: Dict) -> Dict:
     result['supplier_zip']       = _first_nonempty(po_data, vc['supplier_zip']) or None
     result['supplier_city']      = _first_nonempty(po_data, vc['supplier_city']) or None
     result['supplier_state']     = _first_nonempty(po_data, vc['supplier_state']) or None
-    result['supplier_country']   = _first_nonempty(po_data, vc['supplier_country']) or None
+    result['supplier_country']   = '中国'  # 供应商国家默认"中国"
     result['supplier_contact']   = _first_nonempty(po_data, vc['supplier_contact']) or None
-    result['supplier_phone']     = _first_nonempty(po_data, vc['supplier_phone']) or None
+    result['supplier_phone']     = _safe_phone(_first_nonempty(po_data, vc['supplier_phone']))
     result['supplier_email']     = _first_nonempty(po_data, vc['supplier_email']) or None
 
     # ── 收款方信息（billto）+ 内部买方信息 ────────────────────────────────
     bc = BILLTO_FIELD_CANDIDATES
     result['company_name'] = _first_nonempty(po_data, bc['company_name']) or None
 
-    # 街道地址：合并 address1 和 address2
+    # 街道地址：合并 address1 + address2（address2 为空时不加分隔符）
     addr1 = _first_nonempty(po_data, bc['street_address_1'])
     addr2 = _first_nonempty(po_data, bc['street_address_2'])
-    result['street_address'] = ' '.join(filter(None, [addr1, addr2])) or None
+    result['street_address'] = ', '.join(filter(None, [addr1, addr2])) or None
 
     result['postal_code']    = _first_nonempty(po_data, bc['postal_code']) or None
     result['city']           = _first_nonempty(po_data, bc['city']) or None
     result['country']        = _first_nonempty(po_data, bc['country']) or None
+    # contact_person/contact_phone/contact_email/receiver/scania_customer_code：UI 确认不抓取，保持 NULL
 
-    result['contact_person'] = _first_nonempty(po_data, bc['contact_person']) or None
-    result['contact_phone']  = _first_nonempty(po_data, bc['contact_phone']) or None
-    result['contact_email']  = _first_nonempty(po_data, bc['contact_email']) or None
-    result['receiver']       = _first_nonempty(po_data, bc['receiver']) or None
+    # ── 二次填充：从 MXAPICOMPANY 查询结果补充空字段 ─────────────────────────
+    # 与 model_num/size_info 的子表修复逻辑完全一致：
+    #   MXAPIPO 本身的 ven*/billto* 字段若为空（Maximo 权限限制），
+    #   从 fetch_vendor_details 返回的公司详情字典中读取并回填。
+    if vendor_detail_map:
+        vendor_code = po_data.get('vendor')
+        billto_code = po_data.get('billto')
 
-    result['scania_customer_code'] = _first_nonempty(po_data, bc['scania_customer_code']) or None
+        # 供应商字段 fallback（来自 MXAPICOMPANY 查询结果）
+        # 供应商国家不拉取（Maximo UI 供应商国家字段不参与导出）
+        if vendor_code:
+            vd = vendor_detail_map.get(vendor_code, {})
+            if not result.get('supplier_name'):
+                result['supplier_name']   = vd.get('name')
+            if not result.get('vendor_code'):
+                result['vendor_code']     = vendor_code
+            if not result.get('supplier_address'):
+                result['supplier_address'] = vd.get('address1')
+            if not result.get('supplier_address2'):
+                result['supplier_address2'] = vd.get('address2')
+            if not result.get('supplier_zip'):
+                result['supplier_zip']    = vd.get('zip')
+            if not result.get('supplier_city'):
+                result['supplier_city']   = vd.get('city')
+            if not result.get('supplier_state'):
+                result['supplier_state']  = vd.get('stateprovince')
+            # supplier_country 不拉取，保持 NULL
+            if not result.get('supplier_contact'):
+                result['supplier_contact'] = vd.get('contact')
+            if not result.get('supplier_phone'):
+                result['supplier_phone']  = _safe_phone(vd.get('phone1') or '')
+            if not result.get('supplier_email'):
+                result['supplier_email']  = vd.get('email1')
+
+        # 收款方（billto）字段 fallback（来自 MXAPICOMPANY 查询结果）
+        # 联系人/联系电话/电子邮件/接收人 不从公司表填充（Maximo 默认表信息不抓）
+        if billto_code:
+            bd = vendor_detail_map.get(billto_code, {})
+            if not result.get('company_name'):
+                result['company_name']    = bd.get('name')
+            if not result.get('street_address'):
+                addr1 = bd.get('address1') or ''
+                addr2 = bd.get('address2') or ''
+                merged = ', '.join(filter(None, [addr1, addr2]))
+                result['street_address']  = merged or None
+            if not result.get('postal_code'):
+                result['postal_code']     = bd.get('zip')
+            if not result.get('city'):
+                result['city']            = bd.get('city')
+            if not result.get('country'):
+                result['country']         = bd.get('country')
+
+    # ── 国家默认值：billto 国家为空时默认"中国" ────────────────────────────
+    if not result.get('country'):
+        result['country'] = '中国'
 
     return result
 
@@ -188,13 +268,16 @@ def insert_po_header(cursor, header_data: Dict) -> int:
 def batch_map_headers(
     cursor,
     po_list: List[Dict],
+    vendor_detail_map: Dict = None,
 ) -> Tuple[Dict[str, Dict], Dict[str, int]]:
     """
     批量清洗订单头数据（只读 DB 做查询，不写入）
 
     Args:
-        cursor: 数据库游标
-        po_list: 采购订单列表
+        cursor:            数据库游标
+        po_list:           采购订单列表
+        vendor_detail_map: 公司详情字典 {company_code: {...}}
+                           由 fetch_vendor_details 返回；为 None 时跳过二次填充
 
     Returns:
         (cleaned_map, header_id_map):
@@ -204,6 +287,11 @@ def batch_map_headers(
     print("\n" + "="*60)
     print("步骤 2a: 清洗订单头数据")
     print("="*60)
+
+    # 批量预加载 sys_department（独立连接，一次查询，不污染主 cursor）
+    all_vendor_codes = [po.get('vendor') for po in po_list if po.get('vendor')]
+    if all_vendor_codes:
+        _load_dept_cache(list(set(all_vendor_codes)))
 
     cleaned_map: Dict[str, Dict] = {}
     header_id_map: Dict[str, int] = {}
@@ -216,7 +304,7 @@ def batch_map_headers(
             failed += 1
             continue
         try:
-            header_data = map_header_data(cursor, po_data)
+            header_data = map_header_data(cursor, po_data, vendor_detail_map)
             cleaned_map[po_code] = header_data
             header_id_map[po_code] = header_data['id']
             print(f"  ✓ {po_code}")

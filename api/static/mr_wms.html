@@ -171,6 +171,7 @@
     .sub-table table { font-size: 12px; }
     .sub-table td, .sub-table th { padding: 8px 10px; }
     .qty-not-met { color: var(--danger); font-weight: 600; }
+    .badge-chemical { background:#ff6f00;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600; }
 
     /* ── 货柜选择弹窗 ── */
     #bin-modal .modal { max-width: 500px; }
@@ -305,6 +306,7 @@
                 <th>行号</th>
                 <th>项目</th>
                 <th>物料名称</th>
+                <th>商品组</th>
                 <th>当前余量</th>
                 <th>可用量</th>
                 <th>需求数量</th>
@@ -512,6 +514,7 @@ function renderLines(lines) {
         <td>${l.line_number ?? '—'}</td>
         <td>${l.item_number || '—'}</td>
         <td style="max-width:140px;word-break:break-all">${l.description || '—'}</td>
+        <td>${l.commodity_group === '39000000' ? '<span class="badge-chemical">化学品</span>' : (l.commodity_group || '—')}</td>
         <td>${l.current_balance ?? '—'}</td>
         <td>${l.available_qty ?? '—'}</td>
         <td class="${notMet ? 'qty-not-met' : ''}">${l.required_qty ?? '—'}</td>

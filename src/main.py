@@ -11,19 +11,21 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.input.po_loader import load_po_files, get_po_summary
 from src.fetcher.po_fetcher import fetch_po_list
+from src.fetcher.item_fetcher import fetch_item_specs
+from src.fetcher.vendor_fetcher import fetch_vendor_details
 from src.sync.material import validate_and_sync_materials
-from src.sync.po_header import batch_insert_headers
-from src.sync.po_detail import batch_insert_details
+from src.sync.po_header import batch_map_headers, batch_insert_headers
+from src.sync.po_detail import batch_map_details, batch_insert_details
 from src.utils.db import get_connection
 
 
 # 配置选项
 CONFIG = {
     # 数据获取模式
-    'fetch_mode': 'file',           # 'file': 从文件加载, 'api': 从API抓取
+    'fetch_mode': 'api',            # 'file': 从文件加载, 'api': 从API抓取
     'po_numbers': None,             # API模式: 指定订单号列表，如 ['CN5123', 'CN5124']
-    'status_filter': None,          # API模式: 状态筛选，如 'APPR'
-    'max_pages': 1,                 # API模式: 最大页数
+    'status_filter': 'APPR',       # API模式: 状态筛选，只拉已审批订单
+    'max_pages': 10,                # API模式: 最大页数
     'page_size': 20,                # API模式: 每页数量
     
     # 数据同步选项
@@ -210,34 +212,94 @@ def main():
         
         # 步骤 1: 物料验证和同步
         material_map = validate_and_sync_materials(
-            cursor, 
-            po_list, 
+            cursor,
+            po_list,
             auto_sync=CONFIG['auto_sync_materials']
         )
-        
+        conn.commit()  # 物料同步后立即提交，之后可安全关闭连接
+
         if material_map is None:
             print("[ERROR] 物料验证失败，终止同步")
             return False
-        
-        # 步骤 2: 插入订单头
+
+        # ── Maximo API / RPA 查询（耗时较长，期间不持有 DB 连接）─────────────
+
+        # 步骤 2a: 批量查物料规格（cxtypedsg → model_num / size_info）
+        item_nums = list({
+            line.get('itemnum')
+            for po in po_list
+            for line in (po.get('poline') or [])
+            if line.get('itemnum')
+        })
+        item_spec_map = fetch_item_specs(item_nums) if item_nums else {}
+
+        # 步骤 2b: 批量查供应商/收款方详情
+        # Stage 1: 本地缓存
+        company_codes = list({
+            code
+            for po in po_list
+            for code in (po.get('vendor'), po.get('billto'))
+            if code
+        })
+        vendor_detail_map = fetch_vendor_details(company_codes) if company_codes else {}
+
+        # Stage 2: RPA 从 PO 页面抓取缓存未命中的公司信息
+        missing_codes = set(company_codes) - set(vendor_detail_map)
+        if missing_codes:
+            from rpa.po_vendor_scraper import rpa_scrape_vendor_from_po, build_po_maps
+            vendor_po_map, billto_po_map = build_po_maps(po_list)
+            # 只抓缓存未命中的代码
+            vendor_po_map  = {k: v for k, v in vendor_po_map.items()  if k in missing_codes}
+            billto_po_map  = {k: v for k, v in billto_po_map.items()  if k in missing_codes}
+            if vendor_po_map or billto_po_map:
+                rpa_result = rpa_scrape_vendor_from_po(
+                    vendor_po_map, billto_po_map, write_to_cache=True
+                )
+                vendor_detail_map.update(rpa_result)
+
+        # ── 重新获取 DB 连接（旧连接在 Maximo 查询期间可能已超时断开）────────
+        try:
+            cursor.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # 步骤 2c: 预清洗订单头（注入 vendor_detail_map）
+        cleaned_headers, pre_header_id_map = batch_map_headers(
+            cursor, po_list, vendor_detail_map
+        )
+
+        # 步骤 2d: 预清洗订单明细（注入 item_spec_map）
+        cleaned_details = batch_map_details(
+            cursor, po_list, pre_header_id_map, material_map, item_spec_map
+        )
+
+        # 步骤 3: 插入订单头
         header_map = batch_insert_headers(
             cursor,
             po_list,
-            update_existing=CONFIG['update_existing_po']
+            update_existing=CONFIG['update_existing_po'],
+            pre_mapped=cleaned_headers,
         )
-        
+
         if not header_map:
             print("[ERROR] 订单头插入失败，终止同步")
             return False
-        
-        # 步骤 3: 插入订单明细
+
+        # 步骤 4: 插入订单明细
         detail_stats = batch_insert_details(
             cursor,
             po_list,
             header_map,
-            material_map
+            material_map,
+            pre_mapped=cleaned_details,
         )
-        
+
         # 提交事务
         conn.commit()
         print("\n[OK] 事务提交成功")

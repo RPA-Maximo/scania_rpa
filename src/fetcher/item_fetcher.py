@@ -34,6 +34,20 @@ ITEM_SELECT = (
     # ",cxsapmat,manufacturer,commoditygroup"
 )
 
+# PO 行 model_num / size_info 填充所需的物料规格字段
+#
+# MXAPIITEM 实测（itemnum=20398605，CN4876 PO行截图验证）：
+#   cxtypedsg        = "M10*100"       → model_num（型号，UI 完全一致）
+#   cxdimensionquality = "ISO4762 A2-70" → size_info（尺寸/质量，UI 完全一致）
+#   cxmfprodnum      = "M10*100"       （与 cxtypedsg 相同，非质量标准字段）
+#   cxadditionaldata = "ISO4762 A2-70" （size_info 备用字段）
+#
+# cxtypedsg        → model_num（首选）
+# cxdimensionquality → size_info（首选）
+# cxadditionaldata → size_info fallback（cxdimensionquality 为空时）
+# description      → size_info fallback（最终兜底，解析含 "-" 的产品代码）
+ITEM_SPEC_SELECT = "itemnum,cxtypedsg,cxmfprodnum,cxmanufct,catalogcode,description,cxdimensionquality,cxadditionaldata"
+
 
 def _normalize(data: dict) -> dict:
     """移除 Maximo 命名空间前缀"""
@@ -155,3 +169,96 @@ def fetch_items(
 
     print(f"[INFO] 共抓取 {len(all_data)} 条物料记录")
     return all_data
+
+
+def fetch_item_specs(item_numbers: List[str]) -> Dict[str, Any]:
+    """
+    批量查询物料的 cxmfprodnum（制造商产品编号/型号）等规格字段。
+
+    按每批 50 个 item_numbers 分批请求，避免 OSLC where 子句过长。
+
+    Args:
+        item_numbers: 物料编号列表
+
+    Returns:
+        {itemnum: {'catalogcode': ..., 'cxtypedsg': ..., 'cxmfprodnum': ..., 'cxmanufct': ..., 'description': ...}}
+        catalogcode → model_num 首选；cxmfprodnum → size_info；
+        查询失败时返回空 dict（不抛异常，只打印警告）。
+    """
+    if not item_numbers:
+        return {}
+
+    deduped = list(dict.fromkeys(item_numbers))  # 去重，保持顺序
+
+    try:
+        headers = _get_headers()
+    except ValueError as e:
+        print(f"[WARN] fetch_item_specs: 认证失败，跳过物料规格查询: {e}")
+        return {}
+
+    # 批次大小：20 条/批，避免 oslc.where in[...] 子句过长导致 URL 超限
+    BATCH_SIZE = 20
+    result: Dict[str, Any] = {}
+
+    for i in range(0, len(deduped), BATCH_SIZE):
+        batch = deduped[i: i + BATCH_SIZE]
+        batch_num = i // BATCH_SIZE + 1
+
+        # Maximo OSLC 正确的多值查询语法：itemnum in ["a","b","c"]
+        quoted = ",".join(f'"{n}"' for n in batch)
+        where_clause = f'itemnum in [{quoted}]'
+
+        params = {
+            "oslc.select":   ITEM_SPEC_SELECT,
+            "oslc.pageSize": len(batch),
+            "_dropnulls":    0,
+            "oslc.where":    where_clause,
+        }
+        # SSL EOF / 连接异常时最多重试 3 次，指数退避
+        MAX_RETRIES = 3
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                resp = requests.get(
+                    ITEM_API_URL,
+                    headers=headers,
+                    params=params,
+                    verify=VERIFY_SSL,
+                    proxies=settings_manager.get_proxies(),
+                    timeout=REQUEST_TIMEOUT,
+                )
+                if resp.status_code != 200:
+                    print(
+                        f"[WARN] fetch_item_specs: 批次 {batch_num} "
+                        f"HTTP {resp.status_code} — {resp.text[:200]}"
+                    )
+                    break
+                data = resp.json()
+                members = data.get("member") or data.get("rdfs:member") or []
+                if not members:
+                    print(f"[WARN] fetch_item_specs: 批次 {batch_num} 返回 0 条（items={batch[:3]}...）")
+                for raw in members:
+                    item = _normalize(raw)
+                    num = item.get("itemnum")
+                    if num:
+                        result[num] = {
+                            "cxtypedsg":          item.get("cxtypedsg")          or None,  # 型号（UI 验证：M10*100）
+                            "cxdimensionquality": item.get("cxdimensionquality") or None,  # 尺寸/质量（UI 验证：ISO4762 A2-70）
+                            "cxadditionaldata":   item.get("cxadditionaldata")   or None,  # 尺寸/质量备用字段
+                            "cxmfprodnum":        item.get("cxmfprodnum")        or None,  # 制造商产品编号
+                            "cxmanufct":          item.get("cxmanufct")          or None,  # 制造商
+                            "catalogcode":        item.get("catalogcode")        or None,  # 规格代码
+                            "description":        item.get("description")        or None,  # 物料描述（兜底）
+                        }
+                break  # 成功，退出重试循环
+            except Exception as e:
+                if attempt < MAX_RETRIES:
+                    wait = 2 ** attempt  # 2s, 4s
+                    print(f"[WARN] fetch_item_specs: 批次 {batch_num} 第 {attempt} 次失败({e})，{wait}s 后重试")
+                    time.sleep(wait)
+                else:
+                    print(f"[WARN] fetch_item_specs: 批次 {batch_num} 全部 {MAX_RETRIES} 次重试失败: {e}")
+
+        time.sleep(REQUEST_DELAY)
+
+    print(f"[INFO] fetch_item_specs: 查询 {len(deduped)} 个物料，获得 {len(result)} 条规格数据")
+    return result

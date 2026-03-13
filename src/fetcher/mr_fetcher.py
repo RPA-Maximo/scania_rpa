@@ -31,7 +31,7 @@ MR_HEADER_SELECT = (
     "invuseline{"
     "invuselinenum,invuselinetype,itemnum,description,"
     "curbal,availbal,quantity,transdate,"
-    "binnum,lotnum,wonum,conditioncode,"
+    "binnum,lotnum,wonum,conditioncode,commoditygroup,"
     "glcreditacct,chargeto,costcenter,"
     # 预留相关字段（来自 添加/修改预留项目 截图）
     "reservenum,reservetype,requestnum,requestline,requireddate,requestby"
@@ -193,6 +193,58 @@ def fetch_mr_by_number(issue_number: str) -> Optional[Dict[str, Any]]:
             print("未找到")
             return None
         print(f"错误 {resp.status_code}")
+        return None
+    except Exception as e:
+        print(f"异常: {e}")
+        return None
+
+
+def create_remaining_usage_via_api(maximo_href: str) -> Optional[Dict]:
+    """
+    通过 Maximo OSLC wsmethod 触发"创建剩余余量使用情况"操作
+
+    对应 Maximo UI 中的 更多操作 → 创建剩余余量使用情况。
+    Maximo 会自动计算剩余数量（申请量 - 实际出库量）并创建新的使用情况记录。
+
+    Args:
+        maximo_href: 原出库单的 Maximo href 链接
+
+    Returns:
+        dict: 新创建的使用情况数据（含新 usagenum），失败返回 None
+
+    注意：wsmethod 名称 'createRemaining' 为推断值，若报 400/404 需由
+         Maximo 管理员在 Application Designer 中确认 Action 名称。
+    """
+    print(f"  调用 wsmethod:createRemaining → {maximo_href[:80]}...")
+    try:
+        headers = _get_headers()
+    except ValueError as e:
+        print(f"认证失败: {e}")
+        return None
+
+    action_url = maximo_href + "?action=wsmethod:createRemaining"
+    patch_headers = {
+        **headers,
+        "Content-Type": "application/json",
+        "x-method-override": "PATCH",
+        "patchtype": "MERGE",
+    }
+
+    try:
+        resp = requests.post(
+            action_url,
+            headers=patch_headers,
+            json={},
+            verify=VERIFY_SSL,
+            proxies=settings_manager.get_proxies(),
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code in (200, 201):
+            result = resp.json()
+            new_num = result.get("usagenum") or result.get("spi:usagenum") or ""
+            print(f"✓ 创建剩余成功，新流水号: {new_num}")
+            return _normalize(result)
+        print(f"wsmethod 失败 {resp.status_code}: {resp.text[:300]}")
         return None
     except Exception as e:
         print(f"异常: {e}")

@@ -32,7 +32,11 @@ from src.sync.mr_sync import (
     update_bin_location,
     update_issued_qty,
 )
-from src.fetcher.mr_fetcher import writeback_to_maximo, fetch_mr_by_number
+from src.fetcher.mr_fetcher import (
+    writeback_to_maximo,
+    fetch_mr_by_number,
+    create_remaining_usage_via_api,
+)
 from src.sync.inventory_sync import (
     sync_bin_inventory,
     export_bin_inventory_excel,
@@ -387,6 +391,73 @@ def writeback_and_update_serial(header_id: int, req: WritebackRequest):
             "status": new_status,
             "message": "已从 Maximo 刷新状态",
         }
+    except HTTPException:
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+        conn.close()
+
+
+@router.post("/{header_id}/create_remaining", summary="创建剩余使用情况（数量未满足时）")
+def create_remaining_usage(header_id: int):
+    """
+    当 WMS 出库数量 < Maximo 申请数量时，触发 Maximo 创建剩余使用情况：
+
+    流程：
+    1. 调用 Maximo OSLC wsmethod:createRemaining（REST API 方式）
+    2. 若 API 方式成功，将新流水号写入 WMS mr_header.wo_numbers
+    3. 若 API 方式不支持，返回 rpa_required=True 提示前端触发 RPA 浏览器操作
+
+    前端在 WMS 出库按钮确认「数量未满足」后调用此接口。
+    RPA 也可直接调用此接口获取是否需要浏览器操作的标志。
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        header = _fetch_header(conn, header_id)
+        maximo_href = header.get("maximo_href") or ""
+        if not maximo_href:
+            raise HTTPException(status_code=400, detail="该出库单缺少 Maximo href，无法创建剩余")
+
+        # 尝试 REST API 方式
+        result = create_remaining_usage_via_api(maximo_href)
+
+        if result:
+            new_num = result.get("usagenum") or ""
+            if new_num:
+                # 将新流水号追加到 wo_numbers（用 / 分隔）
+                cursor.execute(
+                    """UPDATE mr_header
+                       SET wo_numbers=CONCAT(IFNULL(wo_numbers,''),
+                                             IF(wo_numbers IS NULL OR wo_numbers='', '', ' / '),
+                                             %s),
+                           update_time=NOW()
+                       WHERE id=%s AND del_flag=0""",
+                    (new_num, header_id),
+                )
+                conn.commit()
+            return {
+                "success": True,
+                "rpa_required": False,
+                "new_usage_num": new_num,
+                "message": f"Maximo 已创建剩余使用情况，新流水号: {new_num}",
+            }
+
+        # REST API 失败 → 提示前端/RPA 使用浏览器操作
+        return {
+            "success": False,
+            "rpa_required": True,
+            "new_usage_num": None,
+            "issue_number": header["issue_number"],
+            "message": (
+                "REST API 方式不支持，需通过 RPA 浏览器操作点击"
+                "「创建剩余余量使用情况」并将新流水号回传 WMS"
+            ),
+        }
+
     except HTTPException:
         raise
     except Exception as e:

@@ -1,7 +1,7 @@
 """
 保活工作脚本
 独立进程运行，由 KeepaliveManager 通过 subprocess 调用
-从浏览器执行 PO 查询操作，验证 Maximo 会话是否存活
+通过浏览器内 JS fetch 发一次轻量 OSLC 请求，验证 Maximo 会话是否存活
 
 输出 JSON 结果到 stdout
 """
@@ -19,198 +19,176 @@ if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 from rpa.browser import connect_to_browser
-from rpa.navigation import (
-    navigate_to_receipts_page,
-    search_all_po,
-    wait_for_po_list
-)
+
+
+# 轻量保活请求：whoami 只返回当前用户信息，不走数据库，响应极快（<1s）
+# 备用：/maximo/oslc/os（对象结构元数据，同样无 DB 查询）
+_PING_URL = '/maximo/oslc/whoami'
+_FETCH_TIMEOUT_MS = 10000   # JS fetch 超时 10s（whoami 应在 1s 内响应）
+
+
+async def _extract_auth_from_page(maximo_page) -> dict | None:
+    """
+    从 Playwright 页面上下文提取最新认证信息。
+
+    Returns:
+        {'cookie': str, 'csrf_token': str, 'refresh_token': str} 或 None
+    """
+    try:
+        cookies = await maximo_page.context.cookies()
+        cookie_str = '; '.join(f"{c['name']}={c['value']}" for c in cookies)
+
+        # 查找 csrftoken：先找同名 cookie，再尝试 DOM
+        csrf_token = next(
+            (c['value'] for c in cookies if c['name'].lower() == 'csrftoken'),
+            None,
+        )
+        if not csrf_token:
+            csrf_token = await maximo_page.evaluate("""
+                () => {
+                    const el = document.querySelector('input[name="csrftoken"]');
+                    if (el) return el.value;
+                    const meta = document.querySelector('meta[name="csrftoken"]');
+                    if (meta) return meta.getAttribute('content');
+                    // Maximo 有时把 token 放在全局 JS 变量里
+                    if (typeof csrftoken !== 'undefined') return String(csrftoken);
+                    return '';
+                }
+            """) or ''
+
+        refresh_token = next(
+            (c['value'] for c in cookies if c['name'].lower() == 'x-refresh-token'),
+            '',
+        )
+
+        if cookie_str and csrf_token:
+            return {
+                'cookie': cookie_str,
+                'csrf_token': csrf_token,
+                'refresh_token': refresh_token,
+            }
+        print("未能提取 csrftoken（cookie 数量: %d）" % len(cookies), file=sys.stderr)
+        return None
+    except Exception as e:
+        print(f"提取认证信息失败: {e}", file=sys.stderr)
+        return None
 
 
 async def keepalive_action():
     """
     执行保活动作：
-    1. 连接浏览器
-    2. 检查/导航到接收查询页面
-    3. 执行 PO 搜索
-    4. 验证 PO 列表是否加载
-    5. 读取 PO 数据条数
+    1. 通过 CDP 连接已启动的浏览器
+    2. 检查是否在登录页
+    3. 在 Maximo 页内用 fetch() 发一次 OSLC 轻量请求（same-origin，cookies 自动携带）
+    4. 根据 HTTP 状态码判断 session 是否存活
+    5. 成功时顺带提取最新认证信息，供调用方同步到 auth_manager
     """
     p = None
     try:
-        # 连接浏览器
         print("连接浏览器...", file=sys.stderr)
-        p, browser, maximo_page, main_frame = await connect_to_browser()
+        p, browser, maximo_page, _ = await connect_to_browser()
         print("✓ 浏览器已连接", file=sys.stderr)
 
-        # 检查是否在登录页面（外层页面 URL）
+        # 检查是否跳转到登录页
         current_url = maximo_page.url.lower()
         if 'login' in current_url or 'auth.scania' in current_url:
             return {
                 'success': False,
                 'reason': 'session_expired',
-                'message': '会话已过期，页面在登录页',
-                'url': maximo_page.url,
-                'po_count': 0
+                'message': f'会话已过期，页面在登录页: {maximo_page.url}',
+                'http_status': 0,
             }
 
-        # 检查 iframe 本身是否跳转到了登录页
-        frame_url = main_frame.url.lower()
-        if 'login' in frame_url or 'auth.scania' in frame_url:
+        # 在浏览器页内发 fetch，same-origin 自动带 cookie，无需额外认证
+        # AbortController 限时 10s，whoami 端点无 DB 查询应极速响应
+        print(f"发送保活 ping: {_PING_URL}", file=sys.stderr)
+        fetch_result = await maximo_page.evaluate(f"""
+            () => {{
+                const ctrl = new AbortController();
+                const tid = setTimeout(() => ctrl.abort(), {_FETCH_TIMEOUT_MS});
+                return fetch('{_PING_URL}', {{credentials: 'include', signal: ctrl.signal}})
+                    .then(r => {{ clearTimeout(tid); return {{status: r.status, ok: r.ok}}; }})
+                    .catch(e => {{ clearTimeout(tid); return {{status: 0, ok: false, error: e.message}}; }});
+            }}
+        """)
+
+        status = fetch_result.get('status', 0)
+        ok = fetch_result.get('ok', False)
+        fetch_error = fetch_result.get('error')
+
+        print(f"fetch 结果: status={status}, ok={ok}", file=sys.stderr)
+
+        if ok:
+            result = {
+                'success': True,
+                'reason': 'ok',
+                'message': f'保活成功 (HTTP {status})',
+                'http_status': status,
+            }
+            auth = await _extract_auth_from_page(maximo_page)
+            if auth:
+                result['auth'] = auth
+                print(
+                    f"✓ 认证信息已提取 (cookie={len(auth['cookie'])}字节, "
+                    f"csrf={auth['csrf_token'][:6]}...)",
+                    file=sys.stderr,
+                )
+            return result
+        elif status in (401, 403):
             return {
                 'success': False,
                 'reason': 'session_expired',
-                'message': f'会话已过期，iframe 跳转到登录页: {main_frame.url}',
-                'url': main_frame.url,
-                'po_count': 0
+                'message': f'会话已过期 (HTTP {status})',
+                'http_status': status,
             }
-
-        # 若 main_frame 与外层页面相同，或找不到采购菜单，尝试所有 frame
-        # 选出含有 PURCHASE_MODULE_a 的 frame 作为操作目标
-        active_frame = main_frame
-        found_menu_in_frame = await main_frame.evaluate("""
-            () => !!document.querySelector('[id*="PURCHASE_MODULE_a"]')
-        """)
-        if not found_menu_in_frame:
-            print("当前 frame 未找到采购菜单，尝试其他 frames...", file=sys.stderr)
-            for frame in maximo_page.frames:
-                if frame == main_frame:
-                    continue
-                try:
-                    has_menu = await frame.evaluate("""
-                        () => !!document.querySelector('[id*="PURCHASE_MODULE_a"]')
-                    """)
-                    if has_menu:
-                        active_frame = frame
-                        print(f"✓ 在 frame [{frame.url[:80]}] 找到采购菜单", file=sys.stderr)
-                        break
-                except Exception:
-                    continue
-            else:
-                print("⚠ 所有 frames 均未找到采购菜单，继续尝试原 frame", file=sys.stderr)
-
-        # 导航到接收查询页面（从任意页面均可）
-        print("检查并导航到接收查询页面...", file=sys.stderr)
-        on_search_page = await navigate_to_receipts_page(active_frame)
-
-        if not on_search_page:
-            # 尝试诊断：检查页面标题或弹窗
-            try:
-                page_title = await maximo_page.title()
-                frame_count = len(maximo_page.frames)
-                frame_urls = [f.url[:60] for f in maximo_page.frames]
-            except Exception:
-                page_title = "unknown"
-                frame_count = 0
-                frame_urls = []
+        elif status == 0 and fetch_error:
+            # AbortController 触发时 error message 含 "aborted"
+            reason = 'fetch_timeout' if 'abort' in str(fetch_error).lower() else 'fetch_error'
             return {
                 'success': False,
-                'reason': 'navigation_failed',
-                'message': (
-                    f'无法导航到接收查询页面 | 页面标题: {page_title} | '
-                    f'frame数量: {frame_count} | frames: {frame_urls}'
-                ),
-                'po_count': 0
+                'reason': reason,
+                'message': f'fetch {"超时(>10s)" if reason == "fetch_timeout" else "异常"}: {fetch_error}',
+                'http_status': 0,
             }
-        print("✓ 已到达接收查询页面", file=sys.stderr)
-
-        # 执行 PO 搜索（触发回车）
-        print("执行 PO 搜索...", file=sys.stderr)
-        search_success, search_msg = await search_all_po(active_frame)
-
-        if not search_success:
+        else:
             return {
                 'success': False,
-                'reason': 'search_failed',
-                'message': f'PO 搜索失败: {search_msg}',
-                'po_count': 0
+                'reason': 'unexpected_status',
+                'message': f'意外的 HTTP 状态码: {status}',
+                'http_status': status,
             }
-
-        print("✓ PO 搜索已触发", file=sys.stderr)
-
-        # 等待 PO 列表加载
-        print("等待 PO 列表加载...", file=sys.stderr)
-        list_success, waited = await wait_for_po_list(active_frame)
-
-        if not list_success:
-            # 列表没加载出来，可能会话已过期
-            # 再次检查是否跳转到了登录页
-            current_url = maximo_page.url.lower()
-            if 'login' in current_url or 'auth.scania' in current_url:
-                return {
-                    'success': False,
-                    'reason': 'session_expired',
-                    'message': '会话已过期，PO 搜索后跳转到登录页',
-                    'url': maximo_page.url,
-                    'po_count': 0
-                }
-            return {
-                'success': False,
-                'reason': 'list_timeout',
-                'message': f'PO 列表加载超时 (等待了 {waited:.1f}s)',
-                'po_count': 0
-            }
-
-        # 读取 PO 列表数据条数
-        po_count = await active_frame.evaluate("""
-            () => {
-                const spans = document.querySelectorAll('span.text.label.anchor');
-                return spans.length;
-            }
-        """)
-
-        print(f"✓ PO 列表已加载，共 {po_count} 条数据 (等待了 {waited:.1f}s)", file=sys.stderr)
-
-        return {
-            'success': True,
-            'reason': 'ok',
-            'message': f'保活成功，PO 列表 {po_count} 条',
-            'po_count': po_count,
-            'wait_time': round(waited, 1)
-        }
 
     except Exception as e:
         error_msg = str(e)
-        # 检查是否是连接失败（浏览器未启动）
         if '无法连接到浏览器' in error_msg or 'connect' in error_msg.lower():
             return {
                 'success': False,
                 'reason': 'browser_disconnected',
                 'message': f'浏览器未启动或无法连接: {error_msg}',
-                'po_count': 0
-            }
-        # 检查是否是会话过期
-        if '登录' in error_msg or 'login' in error_msg.lower():
-            return {
-                'success': False,
-                'reason': 'session_expired',
-                'message': f'会话已过期: {error_msg}',
-                'po_count': 0
+                'http_status': 0,
             }
         return {
             'success': False,
             'reason': 'unknown_error',
             'message': f'保活异常: {error_msg}',
-            'po_count': 0
+            'http_status': 0,
         }
     finally:
         if p:
             try:
                 await p.stop()
-                print("✓ 浏览器连接已关闭", file=sys.stderr)
             except Exception:
                 pass
 
 
 async def main():
     """主函数"""
-    # 重定向 stdout 到 stderr，保留原始 stdout 用于输出 JSON
     original_stdout = sys.stdout
     sys.stdout = sys.stderr
 
     try:
         result = await keepalive_action()
 
-        # 恢复 stdout 并输出 JSON 结果
         sys.stdout = original_stdout
         print(json.dumps(result, ensure_ascii=False))
         sys.exit(0 if result['success'] else 1)
@@ -221,7 +199,7 @@ async def main():
             'success': False,
             'reason': 'fatal_error',
             'message': f'保活脚本致命错误: {str(e)}',
-            'po_count': 0
+            'http_status': 0,
         }
         print(json.dumps(error_result, ensure_ascii=False))
         sys.exit(1)

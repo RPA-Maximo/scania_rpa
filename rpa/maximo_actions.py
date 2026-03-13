@@ -26,6 +26,7 @@ from .po_operations import (
     find_and_check_po_line,
     edit_receipt_quantity,
     edit_remark,
+    debug_table_columns,
     _find_po_line_in_current_page,
     _check_checkbox
 )
@@ -46,5 +47,6 @@ __all__ = [
     'find_and_check_po_line',
     'edit_receipt_quantity',
     'edit_remark',
+    'debug_table_columns',
     'process_multiple_po_lines',
 ]

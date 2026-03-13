@@ -2,6 +2,7 @@
 采购订单明细同步模块
 负责 purchase_order_bd 明细表的数据同步
 """
+import re
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -12,6 +13,51 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.utils.db import generate_id
 from src.utils.mapper import PO_LINE_MAPPING
+
+
+def _extract_size_from_desc(desc: str):
+    """
+    从物料描述中提取尺寸/规格字段。
+
+    支持两种模式：
+      1. 英文部分含连字符  → 产品规格代码，如 "工具/ITB-A61-40-10" → "ITB-A61-40-10"
+      2. 描述首词匹配规格模式 → 线程/螺纹尺寸，如 "M10 内六角螺栓/..." → "M10"
+         规格模式：字母开头后紧跟数字（M10, M12, G1/4, NPT1 等）
+
+    Args:
+        desc: Maximo description 字段，格式通常为 "中文描述/English description"
+
+    Returns:
+        提取到的尺寸字符串，或 None
+    """
+    if not desc:
+        return None
+
+    if '/' in desc:
+        chin_part, eng_part = desc.split('/', 1)
+        eng_part = eng_part.strip()
+
+        # 优先：英文部分含连字符 → 产品规格代码（如 "ITB-A61-40-10"）
+        if '-' in eng_part:
+            return eng_part
+
+        # 次选：描述首词匹配 [字母][数字] 开头的规格模式（如 "M10", "M12", "G1"）
+        chin_first = chin_part.strip().split()[0] if chin_part.strip() else ''
+        if chin_first and re.match(r'^[A-Za-z]\d', chin_first):
+            return chin_first
+
+        # 也检查英文部分的首词（描述格式为 "英文/中文" 时）
+        eng_first = eng_part.split()[0] if eng_part else ''
+        if eng_first and re.match(r'^[A-Za-z]\d', eng_first):
+            return eng_first
+
+    else:
+        # 无 "/" 时：整体首词匹配规格模式
+        first_token = desc.strip().split()[0] if desc.strip() else ''
+        if first_token and re.match(r'^[A-Za-z]\d', first_token):
+            return first_token
+
+    return None
 
 
 def get_warehouse_id(cursor, warehouse_code: str) -> int:
@@ -46,6 +92,7 @@ def map_line_data(
     material_id: int = None,
     warehouse_id: int = None,
     header_currency: str = None,
+    item_spec_map: Dict = None,
 ) -> Dict:
     """
     将订单明细 JSON 映射到数据库字段
@@ -78,7 +125,11 @@ def map_line_data(
 
         # 数值转字符串或保留原值
         if db_field == 'qty':
-            value = int(value) if value else 0
+            # 保留小数精度（Maximo 可能返回非整数数量）
+            try:
+                value = float(value) if value is not None else 0
+            except (TypeError, ValueError):
+                value = 0
         elif isinstance(value, (int, float)) and db_field not in ['id', 'form_id', 'sku', 'warehouse']:
             value = str(value)
 
@@ -89,6 +140,31 @@ def map_line_data(
         line_data.get('currency') or line_data.get('currencycode') or header_currency or None
     )
 
+    # model_num / size_info：
+    # poline 中 catalogcode/newitemdesc 均为 null 或不存在（Maximo 实测），
+    # 从 MXAPIITEM 读取规格数据。
+    #
+    # MXAPIITEM 实测（itemnum=20398605，与 Maximo UI PO行列完全对照）：
+    #   cxtypedsg          = "M10*100"       → model_num（Maximo UI "型号" 列）
+    #   cxdimensionquality = "ISO4762 A2-70" → size_info（Maximo UI "尺寸/质量" 列）
+    #   cxadditionaldata   = "ISO4762 A2-70" → size_info 备用（cxdimensionquality 为空时）
+    if item_spec_map:
+        item_num = line_data.get('itemnum')
+        if item_num:
+            spec = item_spec_map.get(item_num, {})
+            if not result.get('model_num'):
+                result['model_num'] = spec.get('cxtypedsg') or None
+
+            if not result.get('size_info'):
+                # 首选 cxdimensionquality，备用 cxadditionaldata，最后解析 description
+                size = (
+                    spec.get('cxdimensionquality')
+                    or spec.get('cxadditionaldata')
+                    or _extract_size_from_desc(spec.get('description') or '')
+                    or None
+                )
+                result['size_info'] = size
+
     return result
 
 
@@ -98,6 +174,7 @@ def insert_po_lines(
     form_id: int,
     material_map: Dict[str, int],
     header_currency: str = None,
+    item_spec_map: Dict = None,
 ) -> Dict:
     """
     插入订单明细
@@ -151,7 +228,7 @@ def insert_po_lines(
                     print(f"    [WARN] 仓库 {warehouse_code} 在 warehouse 表中找不到ID")
         
         # 映射并插入数据
-        line_data = map_line_data(line, form_id, material_id, warehouse_id, header_currency)
+        line_data = map_line_data(line, form_id, material_id, warehouse_id, header_currency, item_spec_map)
         
         columns = ', '.join(line_data.keys())
         placeholders = ', '.join(['%s'] * len(line_data))
@@ -176,6 +253,7 @@ def batch_map_details(
     po_list: List[Dict],
     header_map: Dict[str, int],
     material_map: Dict[str, int],
+    item_spec_map: Dict[str, Dict] = None,
 ) -> Dict[str, List[Dict]]:
     """
     批量清洗订单明细数据（只读 DB 做仓库查询，不写入）
@@ -223,7 +301,7 @@ def batch_map_details(
                     warehouse_cache[warehouse_code] = get_warehouse_id(cursor, warehouse_code)
                 warehouse_id = warehouse_cache[warehouse_code]
 
-            cleaned_lines.append(map_line_data(line, form_id, material_id, warehouse_id, header_currency))
+            cleaned_lines.append(map_line_data(line, form_id, material_id, warehouse_id, header_currency, item_spec_map))
 
         result[po_code] = cleaned_lines
         total_lines += len(cleaned_lines)

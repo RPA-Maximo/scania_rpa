@@ -19,6 +19,8 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.fetcher.po_fetcher import fetch_po_list
+from src.fetcher.item_fetcher import fetch_item_specs
+from src.fetcher.vendor_fetcher import fetch_vendor_details
 from src.sync.db_init import init_schema
 from src.sync.material import validate_and_sync_materials
 from src.sync.po_header import batch_map_headers, batch_insert_headers, check_po_exists
@@ -117,6 +119,47 @@ class POSyncService:
         finally:
             self._lock.release()
 
+    def resync_pos(self, po_numbers: list) -> dict:
+        """
+        强制重新同步指定的 PO（不管是否已存在，先删后插）。
+
+        用途：修复历史记录中缺失的 item_code / model_num / size_info /
+              target_container 等在字段迁移前同步的数据。
+
+        Args:
+            po_numbers: PO 号列表，如 ['CN4300', 'CN5044']
+
+        Returns:
+            dict: 同步结果摘要
+        """
+        if not self._lock.acquire(blocking=False):
+            return {
+                'success': False,
+                'skipped': True,
+                'message': '同步任务正在运行中，本次跳过',
+            }
+        try:
+            return self._do_resync(po_numbers)
+        finally:
+            self._lock.release()
+
+    def resync_all_existing(self) -> dict:
+        """
+        强制重新同步数据库中所有已存在的 PO（先从 DB 取号，再逐一从 Maximo 拉取并覆盖）。
+
+        适合在字段结构变更后批量修复历史数据。
+        """
+        if not self._lock.acquire(blocking=False):
+            return {
+                'success': False,
+                'skipped': True,
+                'message': '同步任务正在运行中，本次跳过',
+            }
+        try:
+            return self._do_resync_all()
+        finally:
+            self._lock.release()
+
     def get_status(self) -> dict:
         """返回同步服务状态"""
         return {
@@ -132,6 +175,35 @@ class POSyncService:
     # ------------------------------------------------------------------
     # 内部实现
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _collect_item_nums(po_list: list) -> list:
+        """从 PO 列表的 poline 中收集所有不重复的 itemnum"""
+        seen = []
+        dedup = set()
+        for po in po_list:
+            for line in po.get('poline', []):
+                num = line.get('itemnum')
+                if num and num not in dedup:
+                    dedup.add(num)
+                    seen.append(num)
+        return seen
+
+    @staticmethod
+    def _collect_company_codes(po_list: list) -> list:
+        """
+        从 PO 列表中收集所有不重复的公司代码（供应商 + 收款方）。
+        用于 fetch_vendor_details 二次查询，与 _collect_item_nums 作用一致。
+        """
+        seen = []
+        dedup = set()
+        for po in po_list:
+            for field in ('vendor', 'billto'):
+                code = po.get(field)
+                if code and code not in dedup:
+                    dedup.add(code)
+                    seen.append(code)
+        return seen
 
     def _ensure_schema(self, conn):
         """首次运行时初始化数据库字段（只执行一次）"""
@@ -224,9 +296,18 @@ class POSyncService:
             if material_map is None:
                 material_map = {}
 
+            # 步骤 3b：从 MXAPIITEM 批量查物料规格（cxtypedsg → model_num）
+            item_nums = self._collect_item_nums(new_pos)
+            item_spec_map = fetch_item_specs(item_nums) if item_nums else {}
+
+            # 步骤 3c：从 MXAPICOMPANY 批量查供应商/收款方详情
+            # （与 fetch_item_specs 模式相同：PO 本身字段为空时做 fallback 填充）
+            company_codes = self._collect_company_codes(new_pos)
+            vendor_detail_map = fetch_vendor_details(company_codes) if company_codes else {}
+
             # 步骤 4：清洗数据（先清洗，后入库）
-            cleaned_headers, pre_header_id_map = batch_map_headers(cursor, new_pos)
-            cleaned_details = batch_map_details(cursor, new_pos, pre_header_id_map, material_map)
+            cleaned_headers, pre_header_id_map = batch_map_headers(cursor, new_pos, vendor_detail_map)
+            cleaned_details = batch_map_details(cursor, new_pos, pre_header_id_map, material_map, item_spec_map)
 
             # 步骤 5：插入主表（使用清洗后数据）
             header_map = batch_insert_headers(
@@ -280,6 +361,112 @@ class POSyncService:
                     conn.close()
                 except Exception:
                     pass
+
+    def _do_resync(self, po_numbers: list) -> dict:
+        """强制重新同步指定 PO 号列表（删旧插新）"""
+        from src.fetcher.po_fetcher import fetch_po_by_number
+
+        start_ts = datetime.now()
+        sync_logger.info(f"RESYNC | 开始强制重同步 {len(po_numbers)} 个 PO: {po_numbers}")
+
+        po_list = []
+        fetch_failed = []
+        for po_num in po_numbers:
+            po_data = fetch_po_by_number(po_num, save_to_file=False)
+            if po_data:
+                po_list.append(po_data)
+            else:
+                fetch_failed.append(po_num)
+                sync_logger.warning(f"RESYNC | 抓取失败: {po_num}")
+
+        if not po_list:
+            return {
+                'success': False,
+                'message': f'所有 PO 均抓取失败: {fetch_failed}',
+                'fetch_failed': fetch_failed,
+            }
+
+        conn = None
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            self._ensure_schema(conn)
+
+            material_map = validate_and_sync_materials(
+                cursor, po_list,
+                auto_sync=self._config['auto_sync_materials'],
+            ) or {}
+
+            item_nums = self._collect_item_nums(po_list)
+            item_spec_map = fetch_item_specs(item_nums) if item_nums else {}
+
+            company_codes = self._collect_company_codes(po_list)
+            vendor_detail_map = fetch_vendor_details(company_codes) if company_codes else {}
+
+            cleaned_headers, pre_header_id_map = batch_map_headers(cursor, po_list, vendor_detail_map)
+            cleaned_details = batch_map_details(cursor, po_list, pre_header_id_map, material_map, item_spec_map)
+
+            # update_existing=True：删旧记录，重新插入
+            header_map = batch_insert_headers(
+                cursor, po_list, update_existing=True, pre_mapped=cleaned_headers
+            )
+            detail_stats = batch_insert_details(
+                cursor, po_list, header_map, material_map, pre_mapped=cleaned_details
+            )
+            conn.commit()
+
+            elapsed = (datetime.now() - start_ts).total_seconds()
+            result = {
+                'success': True,
+                'resynced': len(po_list),
+                'fetch_failed': fetch_failed,
+                'detail_stats': detail_stats,
+                'elapsed_seconds': round(elapsed, 2),
+                'message': f'成功重同步 {len(po_list)} 个 PO',
+            }
+            sync_logger.info(f"RESYNC | ✅ 完成 | 重同步 {len(po_list)} 个 | 耗时 {elapsed:.1f}s")
+            return result
+
+        except Exception as e:
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            msg = f"数据库操作失败: {e}"
+            sync_logger.error(f"RESYNC | ❌ {msg}", exc_info=True)
+            return {'success': False, 'message': msg}
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    def _do_resync_all(self) -> dict:
+        """从数据库取出所有 PO 号，逐一从 Maximo 拉取并覆盖"""
+        conn = None
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT code FROM purchase_order WHERE del_flag = 0 ORDER BY id")
+            rows = cursor.fetchall()
+            cursor.close()
+        except Exception as e:
+            return {'success': False, 'message': f'查询数据库失败: {e}'}
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+        po_numbers = [r[0] for r in rows]
+        if not po_numbers:
+            return {'success': True, 'message': '数据库中无 PO 记录', 'resynced': 0}
+
+        sync_logger.info(f"RESYNC-ALL | 共 {len(po_numbers)} 个 PO 待重同步")
+        return self._do_resync(po_numbers)
 
 
 # ── 调度器 ────────────────────────────────────────────────────────────────────

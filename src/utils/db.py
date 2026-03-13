@@ -5,19 +5,23 @@
 import sys
 from pathlib import Path
 from datetime import datetime
-import random
-
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+import threading
+
 import mysql.connector
 from config.auth import get_db_config
+
+# 线程安全序列号（替换随机数，避免批量生成 ID 时碰撞）
+_id_lock = threading.Lock()
+_id_seq = 0
 
 
 def get_connection():
     """
     获取数据库连接
-    
+
     Returns:
         Connection: MySQL 连接对象
     """
@@ -27,13 +31,17 @@ def get_connection():
 
 def generate_id() -> int:
     """
-    生成雪花 ID (简化版: 时间戳 + 随机数)
-    
-    Returns:
-        int: 生成的 ID
+    生成唯一 ID（时间戳毫秒 × 10000 + 进程内单调递增序列号）
+
+    序列号范围 0-9999，即同一毫秒内可生成 10000 个不重复 ID。
+    线程安全，适合批量预生成场景（如 batch_map_details 一次生成 70+ 行 ID）。
     """
+    global _id_seq
     timestamp = int(datetime.now().timestamp() * 1000)
-    return timestamp * 1000 + random.randint(0, 999)
+    with _id_lock:
+        _id_seq = (_id_seq + 1) % 10000
+        seq = _id_seq
+    return timestamp * 10000 + seq
 
 
 def format_datetime(dt_str: str) -> str:
