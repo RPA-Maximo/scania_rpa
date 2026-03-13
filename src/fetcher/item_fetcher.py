@@ -35,10 +35,16 @@ ITEM_SELECT = (
 )
 
 # PO 行 model_num / size_info 填充所需的物料规格字段
-# cxtypedsg   → model_num（型号，UI 验证：行4/5 cxtypedsg=ITB-P31-12-10/ETV... 与 UI 完全一致）
-# cxmfprodnum → 制造商产品编号（与 cxtypedsg 不同时是内部编号，不展示为型号）
-# catalogcode → size_info 候选（MXAPIITEM 层面的规格代码，需验证）
-# description → size_info 候选 fallback（"中文/English" 格式，取 "/" 后半部分）
+#
+# UI 对照（CN4876 PO行截图）：
+#   Maximo 列 "型号"      = M10*100       ← catalogcode（螺栓类完整尺寸）
+#                         = ITB-P31-12-10 ← cxtypedsg（工具类型号，catalogcode 为空时 fallback）
+#   Maximo 列 "尺寸/质量" = ISO4762 A2-70 ← cxmfprodnum（材料/质量标准代号）
+#
+# catalogcode → model_num 首选（螺栓类：M10*100）
+# cxtypedsg   → model_num fallback（工具类：ITB-P31-12-10，catalogcode 为空时使用）
+# cxmfprodnum → size_info（材料/质量标准：ISO4762 A2-70）
+# description → size_info fallback（"中文/English" 格式解析）
 ITEM_SPEC_SELECT = "itemnum,cxtypedsg,cxmfprodnum,cxmanufct,catalogcode,description"
 
 
@@ -174,7 +180,8 @@ def fetch_item_specs(item_numbers: List[str]) -> Dict[str, Any]:
         item_numbers: 物料编号列表
 
     Returns:
-        {itemnum: {'cxmfprodnum': ..., 'cxtypedsg': ..., 'cxmanufct': ...}}
+        {itemnum: {'catalogcode': ..., 'cxtypedsg': ..., 'cxmfprodnum': ..., 'cxmanufct': ..., 'description': ...}}
+        catalogcode → model_num 首选；cxmfprodnum → size_info；
         查询失败时返回空 dict（不抛异常，只打印警告）。
     """
     if not item_numbers:

@@ -142,32 +142,34 @@ def map_line_data(
 
     # model_num / size_info：
     # poline 中 catalogcode/newitemdesc 均为 null 或不存在（Maximo 实测），
-    # 从 MXAPIITEM 读取规格数据，再回退到 poline 自身的 description 字段：
+    # 从 MXAPIITEM 读取规格数据。
     #
-    #   model_num  ← MXAPIITEM.cxtypedsg（型号，UI 验证字段）
-    #   size_info  ← 优先级：
-    #     1. MXAPIITEM.catalogcode（规格代码，若有值直接使用）
-    #     2. MXAPIITEM.description 解析（含 "-" 的英文产品代码 或 M10/M12 等规格前缀）
-    #     3. poline 自身 description 解析（同上规则，作为最终兜底）
+    # UI 对照（CN4876 PO行截图）：
+    #   Maximo 列 "型号"      = M10*100       ← MXAPIITEM.catalogcode（完整尺寸规格）
+    #   Maximo 列 "尺寸/质量" = ISO4762 A2-70 ← MXAPIITEM.cxmfprodnum（材料/质量标准）
+    #
+    # model_num 优先级：
+    #   catalogcode（螺栓类：M10*100）> cxtypedsg（工具类：ITB-P31-12-10）
+    # size_info 优先级：
+    #   cxmfprodnum（质量标准：ISO4762 A2-70）> description 解析（兜底）
     if item_spec_map:
         item_num = line_data.get('itemnum')
         if item_num:
             spec = item_spec_map.get(item_num, {})
             if not result.get('model_num'):
-                result['model_num'] = spec.get('cxtypedsg') or None
+                # 螺栓类：catalogcode = "M10*100"（完整型号）
+                # 工具类：catalogcode 为空，退 cxtypedsg = "ITB-P31-12-10"
+                result['model_num'] = (
+                    spec.get('catalogcode') or spec.get('cxtypedsg') or None
+                )
 
             if not result.get('size_info'):
-                # 1. MXAPIITEM.catalogcode
-                size = spec.get('catalogcode') or None
-                # 2. MXAPIITEM.description 解析
+                # 标准件：cxmfprodnum = "ISO4762 A2-70"（材料/质量标准）
+                size = spec.get('cxmfprodnum') or None
+                # fallback：description 解析（工具类含 "-" 的产品代码等）
                 if not size:
                     size = _extract_size_from_desc(spec.get('description') or '')
                 result['size_info'] = size or None
-
-    # 3. 最终兜底：poline 自身 description 字段解析
-    if not result.get('size_info'):
-        poline_desc = line_data.get('description') or ''
-        result['size_info'] = _extract_size_from_desc(poline_desc) or None
 
     return result
 
