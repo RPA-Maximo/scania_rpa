@@ -11,9 +11,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.input.po_loader import load_po_files, get_po_summary
 from src.fetcher.po_fetcher import fetch_po_list
+from src.fetcher.item_fetcher import fetch_item_specs
+from src.fetcher.vendor_fetcher import fetch_vendor_details
 from src.sync.material import validate_and_sync_materials
-from src.sync.po_header import batch_insert_headers
-from src.sync.po_detail import batch_insert_details
+from src.sync.po_header import batch_map_headers, batch_insert_headers
+from src.sync.po_detail import batch_map_details, batch_insert_details
 from src.utils.db import get_connection
 
 
@@ -210,32 +212,62 @@ def main():
         
         # 步骤 1: 物料验证和同步
         material_map = validate_and_sync_materials(
-            cursor, 
-            po_list, 
+            cursor,
+            po_list,
             auto_sync=CONFIG['auto_sync_materials']
         )
-        
+
         if material_map is None:
             print("[ERROR] 物料验证失败，终止同步")
             return False
-        
-        # 步骤 2: 插入订单头
+
+        # 步骤 2a: 批量查物料规格（cxtypedsg → model_num / size_info）
+        item_nums = list({
+            line.get('itemnum')
+            for po in po_list
+            for line in (po.get('poline') or [])
+            if line.get('itemnum')
+        })
+        item_spec_map = fetch_item_specs(item_nums) if item_nums else {}
+
+        # 步骤 2b: 批量查供应商/收款方详情（供应商名称/地址/联系方式等）
+        company_codes = list({
+            code
+            for po in po_list
+            for code in (po.get('vendor'), po.get('billto'))
+            if code
+        })
+        vendor_detail_map = fetch_vendor_details(company_codes) if company_codes else {}
+
+        # 步骤 2c: 预清洗订单头（注入 vendor_detail_map）
+        cleaned_headers, pre_header_id_map = batch_map_headers(
+            cursor, po_list, vendor_detail_map
+        )
+
+        # 步骤 2d: 预清洗订单明细（注入 item_spec_map）
+        cleaned_details = batch_map_details(
+            cursor, po_list, pre_header_id_map, material_map, item_spec_map
+        )
+
+        # 步骤 3: 插入订单头
         header_map = batch_insert_headers(
             cursor,
             po_list,
-            update_existing=CONFIG['update_existing_po']
+            update_existing=CONFIG['update_existing_po'],
+            pre_mapped=cleaned_headers,
         )
-        
+
         if not header_map:
             print("[ERROR] 订单头插入失败，终止同步")
             return False
-        
-        # 步骤 3: 插入订单明细
+
+        # 步骤 4: 插入订单明细
         detail_stats = batch_insert_details(
             cursor,
             po_list,
             header_map,
-            material_map
+            material_map,
+            pre_mapped=cleaned_details,
         )
         
         # 提交事务
