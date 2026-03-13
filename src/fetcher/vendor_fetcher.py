@@ -151,12 +151,115 @@ def fetch_vendors(
     return all_data
 
 
+def fetch_company_details_from_api(company_codes: List[str]) -> Dict[str, Any]:
+    """
+    从 MXAPIVENDOR 批量查询公司详细信息（名称、地址、联系方式）。
+    与 fetch_item_specs() 模式相同：按批次查询，结果写入 company_cache 持久化。
+
+    Args:
+        company_codes: 公司代码列表（供应商代码 + 收款方代码混合传入均可）
+
+    Returns:
+        {company_code: {name, address1, address2, city, stateprovince,
+                        zip, country, phone1, email1, contact}}
+        查询失败时返回空 dict（不抛异常，只打印警告）。
+    """
+    if not company_codes:
+        return {}
+
+    deduped = list(dict.fromkeys(company_codes))
+
+    try:
+        headers = _get_headers()
+    except ValueError as e:
+        print(f"[WARN] fetch_company_details_from_api: 认证失败，跳过公司详情查询: {e}")
+        return {}
+
+    BATCH_SIZE = 20
+    result: Dict[str, Any] = {}
+
+    for i in range(0, len(deduped), BATCH_SIZE):
+        batch = deduped[i: i + BATCH_SIZE]
+        batch_num = i // BATCH_SIZE + 1
+
+        quoted = ",".join(f'"{c}"' for c in batch)
+        where_clause = f'company in [{quoted}]'
+
+        params = {
+            "oslc.select":   COMPANY_DETAIL_SELECT,
+            "oslc.pageSize": len(batch),
+            "_dropnulls":    0,
+            "oslc.where":    where_clause,
+        }
+        try:
+            resp = requests.get(
+                VENDOR_API_URL,
+                headers=headers,
+                params=params,
+                verify=VERIFY_SSL,
+                proxies=settings_manager.get_proxies(),
+                timeout=REQUEST_TIMEOUT,
+            )
+            if resp.status_code != 200:
+                print(
+                    f"[WARN] fetch_company_details_from_api: 批次 {batch_num} "
+                    f"HTTP {resp.status_code} — {resp.text[:200]}"
+                )
+                continue
+            data = resp.json()
+            members = data.get("member") or data.get("rdfs:member") or []
+            if not members:
+                print(f"[WARN] fetch_company_details_from_api: 批次 {batch_num} 返回 0 条（codes={batch[:3]}...）")
+            for raw in members:
+                item = _normalize(raw)
+                code = item.get("company")
+                if code:
+                    result[code] = {
+                        "name":          item.get("name")          or None,
+                        "address1":      item.get("address1")      or None,
+                        "address2":      item.get("address2")      or None,
+                        "city":          item.get("city")          or None,
+                        "stateprovince": item.get("stateprovince") or None,
+                        "zip":           item.get("zip")           or None,
+                        "country":       item.get("country")       or None,
+                        "phone1":        item.get("phone1")        or None,
+                        "email1":        item.get("email1")        or None,
+                        "contact":       item.get("contact")       or None,
+                    }
+        except Exception as e:
+            print(f"[WARN] fetch_company_details_from_api: 批次 {batch_num} 异常: {e}")
+
+        time.sleep(REQUEST_DELAY)
+
+    # 写入 company_cache，供下次直接命中
+    if result:
+        try:
+            from src.utils.db import get_connection
+            from src.sync.company_cache import upsert_company
+            _conn = get_connection()
+            _cur = _conn.cursor()
+            try:
+                for code, detail in result.items():
+                    upsert_company(_cur, code, **detail)
+                _conn.commit()
+            finally:
+                _cur.close()
+                _conn.close()
+            print(f"[INFO] fetch_company_details_from_api: 已缓存 {len(result)} 条公司信息")
+        except Exception as e:
+            print(f"[WARN] fetch_company_details_from_api: 写入 company_cache 失败: {e}")
+
+    print(f"[INFO] fetch_company_details_from_api: 查询 {len(deduped)} 个公司，获得 {len(result)} 条")
+    return result
+
+
 def fetch_vendor_details(company_codes: List[str]) -> Dict[str, Any]:
     """
-    从本地 company_cache 表加载公司详细信息（名称、地址、联系方式）。
+    加载公司详细信息（名称、地址、联系方式）。
 
-    缺失的公司信息通过 RPA 从 Maximo PO 页面抓取（由调用方负责，
-    需要 po_list 来构建 vendor_po_map / billto_po_map）。
+    优先级：
+      1. 本地 company_cache 表（避免重复 API 调用）
+      2. MXAPIVENDOR API（缓存未命中时自动查询并回写缓存）
 
     Args:
         company_codes: 公司代码列表（可混合供应商代码和收款方代码）
@@ -171,7 +274,7 @@ def fetch_vendor_details(company_codes: List[str]) -> Dict[str, Any]:
 
     deduped = list(dict.fromkeys(company_codes))  # 去重，保持顺序
 
-    # 从本地 company_cache 表加载
+    # 1. 从本地 company_cache 表加载
     result: Dict[str, Any] = {}
     try:
         from src.utils.db import get_connection
@@ -188,7 +291,14 @@ def fetch_vendor_details(company_codes: List[str]) -> Dict[str, Any]:
     except Exception as e:
         print(f"[WARN] fetch_vendor_details: 本地缓存读取失败: {e}")
 
-    missing = len(deduped) - len(result)
-    if missing:
-        print(f"[INFO] fetch_vendor_details: 仍有 {missing} 条未命中，将由 RPA 补充")
+    # 2. 缓存未命中：直接调 MXAPIVENDOR API（与 fetch_item_specs 模式相同）
+    missing_codes = [c for c in deduped if c not in result]
+    if missing_codes:
+        print(f"[INFO] fetch_vendor_details: 缓存未命中 {len(missing_codes)} 条，查询 MXAPIVENDOR API")
+        api_result = fetch_company_details_from_api(missing_codes)
+        result.update(api_result)
+        still_missing = len([c for c in missing_codes if c not in api_result])
+        if still_missing:
+            print(f"[INFO] fetch_vendor_details: 仍有 {still_missing} 条 API 未返回，可手动录入 /api/vendor-cache")
+
     return result
