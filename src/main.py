@@ -216,10 +216,13 @@ def main():
             po_list,
             auto_sync=CONFIG['auto_sync_materials']
         )
+        conn.commit()  # 物料同步后立即提交，之后可安全关闭连接
 
         if material_map is None:
             print("[ERROR] 物料验证失败，终止同步")
             return False
+
+        # ── Maximo API / RPA 查询（耗时较长，期间不持有 DB 连接）─────────────
 
         # 步骤 2a: 批量查物料规格（cxtypedsg → model_num / size_info）
         item_nums = list({
@@ -238,6 +241,18 @@ def main():
             if code
         })
         vendor_detail_map = fetch_vendor_details(company_codes) if company_codes else {}
+
+        # ── 重新获取 DB 连接（旧连接在 Maximo 查询期间可能已超时断开）────────
+        try:
+            cursor.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+        conn = get_connection()
+        cursor = conn.cursor()
 
         # 步骤 2c: 预清洗订单头（注入 vendor_detail_map）
         cleaned_headers, pre_header_id_map = batch_map_headers(
@@ -269,7 +284,7 @@ def main():
             material_map,
             pre_mapped=cleaned_details,
         )
-        
+
         # 提交事务
         conn.commit()
         print("\n[OK] 事务提交成功")
