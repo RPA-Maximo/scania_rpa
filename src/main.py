@@ -233,7 +233,8 @@ def main():
         })
         item_spec_map = fetch_item_specs(item_nums) if item_nums else {}
 
-        # 步骤 2b: 批量查供应商/收款方详情（供应商名称/地址/联系方式等）
+        # 步骤 2b: 批量查供应商/收款方详情
+        # Stage 1: 本地缓存
         company_codes = list({
             code
             for po in po_list
@@ -241,6 +242,20 @@ def main():
             if code
         })
         vendor_detail_map = fetch_vendor_details(company_codes) if company_codes else {}
+
+        # Stage 2: RPA 从 PO 页面抓取缓存未命中的公司信息
+        missing_codes = set(company_codes) - set(vendor_detail_map)
+        if missing_codes:
+            from rpa.po_vendor_scraper import rpa_scrape_vendor_from_po, build_po_maps
+            vendor_po_map, billto_po_map = build_po_maps(po_list)
+            # 只抓缓存未命中的代码
+            vendor_po_map  = {k: v for k, v in vendor_po_map.items()  if k in missing_codes}
+            billto_po_map  = {k: v for k, v in billto_po_map.items()  if k in missing_codes}
+            if vendor_po_map or billto_po_map:
+                rpa_result = rpa_scrape_vendor_from_po(
+                    vendor_po_map, billto_po_map, write_to_cache=True
+                )
+                vendor_detail_map.update(rpa_result)
 
         # ── 重新获取 DB 连接（旧连接在 Maximo 查询期间可能已超时断开）────────
         try:

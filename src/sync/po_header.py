@@ -10,8 +10,42 @@ from typing import Dict, List, Optional, Tuple
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.utils.db import generate_id, format_datetime
+from src.utils.db import generate_id, format_datetime, get_connection
 from src.utils.mapper import PO_HEADER_MAPPING, VENDOR_FIELD_CANDIDATES, BILLTO_FIELD_CANDIDATES  # noqa: E501
+
+# 模块级 sys_department 缓存，避免重复查询且不污染主 cursor
+_dept_cache: Dict[str, Optional[int]] = {}
+_dept_cache_loaded: bool = False
+
+
+def _load_dept_cache(vendor_codes: List[str]) -> None:
+    """用独立连接批量预加载 sys_department，结果写入模块级缓存。"""
+    global _dept_cache_loaded
+    if not vendor_codes:
+        return
+    uncached = [c for c in vendor_codes if c not in _dept_cache]
+    if not uncached:
+        return
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            placeholders = ','.join(['%s'] * len(uncached))
+            cur.execute(
+                f"SELECT code, id FROM sys_department "
+                f"WHERE code IN ({placeholders}) AND del_flag=0",
+                uncached,
+            )
+            found = {row[0]: row[1] for row in cur.fetchall()}
+        finally:
+            cur.close()
+            conn.close()
+        for code in uncached:
+            _dept_cache[code] = found.get(code)  # None if not found
+    except Exception as e:
+        print(f"[WARN] sys_department 批量查询失败（跳过 owner_dept_id 填充）: {e}")
+        for code in uncached:
+            _dept_cache.setdefault(code, None)
 
 
 def _first_nonempty(data: dict, keys: list) -> str:
@@ -38,30 +72,15 @@ def _safe_phone(value: str) -> Optional[str]:
 
 def get_supplier_info(cursor, vendor_code: str) -> Tuple[Optional[int], Optional[str]]:
     """
-    根据供应商代码查询供应商信息
-    
-    Args:
-        cursor: 数据库游标
-        vendor_code: 供应商代码 (JSON中的vendor字段)
-        
-    Returns:
-        tuple: (supplier_id, supplier_name) 如果未找到返回 (None, None)
+    根据供应商代码查询 sys_department 的 owner_dept_id。
+    使用模块级缓存（独立连接预加载），不触碰传入的主 cursor，
+    避免查询失败时污染主 cursor 导致后续所有操作失败。
     """
     if not vendor_code:
         return None, None
-    
-    try:
-        cursor.execute(
-            "SELECT id, name FROM sys_department WHERE code = %s AND del_flag = 0",
-            (vendor_code,)
-        )
-        result = cursor.fetchone()
-        if result:
-            return result[0], result[1]  # (id, name)
-        return None, None
-    except Exception as e:
-        print(f"  [WARN] 查询供应商信息失败 (code={vendor_code}): {e}")
-        return None, None
+    if vendor_code not in _dept_cache:
+        _load_dept_cache([vendor_code])
+    return _dept_cache.get(vendor_code), None
 
 
 def map_header_data(cursor, po_data: Dict, vendor_detail_map: Dict = None) -> Dict:
@@ -275,6 +294,11 @@ def batch_map_headers(
     print("\n" + "="*60)
     print("步骤 2a: 清洗订单头数据")
     print("="*60)
+
+    # 批量预加载 sys_department（独立连接，一次查询，不污染主 cursor）
+    all_vendor_codes = [po.get('vendor') for po in po_list if po.get('vendor')]
+    if all_vendor_codes:
+        _load_dept_cache(list(set(all_vendor_codes)))
 
     cleaned_map: Dict[str, Dict] = {}
     header_id_map: Dict[str, int] = {}

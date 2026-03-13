@@ -153,15 +153,10 @@ def fetch_vendors(
 
 def fetch_vendor_details(company_codes: List[str]) -> Dict[str, Any]:
     """
-    批量获取公司详细信息（名称、地址、联系方式）。
+    从本地 company_cache 表加载公司详细信息（名称、地址、联系方式）。
 
-    查询策略（两阶段，与 fetch_item_specs 的 fallback 机制一致）：
-      1. 先从本地 company_cache 表（数据库）读取已缓存的数据
-      2. 未命中的代码再尝试 MXAPIVENDOR OSLC 接口
-         - 若接口返回 BMXAA0024E（权限不足），静默跳过
-         - MXAPIVENDOR 成功返回的数据会自动写入 company_cache，下次无需再查
-
-    用户只需通过 POST /api/vendor-cache 预填一次公司名称，之后每次同步自动使用。
+    缺失的公司信息通过 RPA 从 Maximo PO 页面抓取（由调用方负责，
+    需要 po_list 来构建 vendor_po_map / billto_po_map）。
 
     Args:
         company_codes: 公司代码列表（可混合供应商代码和收款方代码）
@@ -176,11 +171,11 @@ def fetch_vendor_details(company_codes: List[str]) -> Dict[str, Any]:
 
     deduped = list(dict.fromkeys(company_codes))  # 去重，保持顺序
 
-    # ── 阶段 1：从本地 company_cache 表加载 ─────────────────────────────────
+    # 从本地 company_cache 表加载
     result: Dict[str, Any] = {}
     try:
         from src.utils.db import get_connection
-        from src.sync.company_cache import load_company_cache, upsert_company
+        from src.sync.company_cache import load_company_cache
         _cache_conn = get_connection()
         _cache_cur = _cache_conn.cursor()
         try:
@@ -189,115 +184,11 @@ def fetch_vendor_details(company_codes: List[str]) -> Dict[str, Any]:
         finally:
             _cache_cur.close()
             _cache_conn.close()
-        if result:
-            print(f"[INFO] fetch_vendor_details: 本地缓存命中 {len(result)}/{len(deduped)} 条")
+        print(f"[INFO] fetch_vendor_details: 本地缓存命中 {len(result)}/{len(deduped)} 条")
     except Exception as e:
         print(f"[WARN] fetch_vendor_details: 本地缓存读取失败: {e}")
 
-    # 所有代码都已在缓存中 → 直接返回
-    missing = [c for c in deduped if c not in result]
-    if not missing:
-        return result
-
-    # ── 阶段 2：从 MXAPIVENDOR 查询未命中的代码 ─────────────────────────────
-    try:
-        headers = _get_headers()
-    except ValueError as e:
-        print(f"[WARN] fetch_vendor_details: 认证失败，跳过 MXAPIVENDOR 查询: {e}")
-        return result
-
-    BATCH_SIZE = 20
-    api_found: Dict[str, Any] = {}
-
-    for i in range(0, len(missing), BATCH_SIZE):
-        batch = missing[i: i + BATCH_SIZE]
-        batch_num = i // BATCH_SIZE + 1
-
-        quoted = ",".join(f'"{c}"' for c in batch)
-        where_clause = f'company in [{quoted}]'
-
-        params = {
-            "oslc.select":   COMPANY_DETAIL_SELECT,
-            "oslc.pageSize": len(batch),
-            "_dropnulls":    0,
-            "oslc.where":    where_clause,
-        }
-        try:
-            resp = requests.get(
-                VENDOR_API_URL,
-                headers=headers,
-                params=params,
-                verify=VERIFY_SSL,
-                proxies=settings_manager.get_proxies(),
-                timeout=REQUEST_TIMEOUT,
-            )
-            if resp.status_code != 200:
-                print(
-                    f"[WARN] fetch_vendor_details: MXAPIVENDOR 批次 {batch_num} "
-                    f"HTTP {resp.status_code}（可能权限不足，将使用本地缓存）"
-                )
-                continue
-            data = resp.json()
-            members = data.get("member") or data.get("rdfs:member") or []
-            for raw in members:
-                item = _normalize(raw)
-                code = item.get("company")
-                if code:
-                    api_found[code] = {
-                        "name":          item.get("name")          or None,
-                        "address1":      item.get("address1")      or None,
-                        "address2":      item.get("address2")      or None,
-                        "city":          item.get("city")          or None,
-                        "stateprovince": item.get("stateprovince") or None,
-                        "zip":           item.get("zip")           or None,
-                        "country":       item.get("country")       or None,
-                        "phone1":        item.get("phone1")        or None,
-                        "email1":        item.get("email1")        or None,
-                        "contact":       item.get("contact")       or None,
-                    }
-        except Exception as e:
-            print(f"[WARN] fetch_vendor_details: MXAPIVENDOR 批次 {batch_num} 异常: {e}")
-
-        time.sleep(REQUEST_DELAY)
-
-    # 将 MXAPIVENDOR 结果写入本地缓存（下次直接命中，不再请求 Maximo）
-    if api_found:
-        try:
-            from src.utils.db import get_connection
-            from src.sync.company_cache import upsert_company
-            _w_conn = get_connection()
-            _w_cur = _w_conn.cursor()
-            try:
-                for code, entry in api_found.items():
-                    upsert_company(_w_cur, code, **entry)
-                _w_conn.commit()
-                print(f"[INFO] fetch_vendor_details: MXAPIVENDOR 返回 {len(api_found)} 条，已写入本地缓存")
-            finally:
-                _w_cur.close()
-                _w_conn.close()
-        except Exception as e:
-            print(f"[WARN] fetch_vendor_details: 写入本地缓存失败: {e}")
-        result.update(api_found)
-
-    # ── 阶段 3：MXAPIVENDOR 仍有缺口 → 通过 RPA 浏览器抓取 ─────────────────
-    still_missing = [c for c in deduped if c not in result]
-    if still_missing:
-        print(f"[INFO] fetch_vendor_details: 尝试 RPA 浏览器抓取 {len(still_missing)} 个公司")
-        try:
-            from rpa.vendor_operations import rpa_fetch_vendor_details
-            rpa_result = rpa_fetch_vendor_details(still_missing, write_to_cache=True)
-            if rpa_result:
-                result.update(rpa_result)
-                print(f"[INFO] fetch_vendor_details: RPA 成功抓取 {len(rpa_result)} 条")
-            else:
-                print("[WARN] fetch_vendor_details: RPA 未返回数据（浏览器未启动或页面无数据）")
-        except Exception as e:
-            print(f"[WARN] fetch_vendor_details: RPA 抓取跳过: {e}")
-
-    total_missing = len(deduped) - len(result)
-    print(
-        f"[INFO] fetch_vendor_details: 查询 {len(deduped)} 个公司，获得 {len(result)} 条"
-        + (f"，仍缺 {total_missing} 条（可通过 POST /api/vendor-cache 手动补充）"
-           if total_missing else "")
-    )
+    missing = len(deduped) - len(result)
+    if missing:
+        print(f"[INFO] fetch_vendor_details: 仍有 {missing} 条未命中，将由 RPA 补充")
     return result

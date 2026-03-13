@@ -42,8 +42,11 @@ from .config import SELECTORS, COLUMNS, WAIT_TIMES, LIMITS
 # 工具函数（可选导出）
 from .utils import trigger_input_events, escape_js_string, wait_for_condition
 
-# 供应商/公司信息 RPA 抓取
+# 供应商/公司信息 RPA 抓取（Companies 应用页面）
 from .vendor_operations import rpa_fetch_vendor_details, fetch_company_details_via_rpa
+
+# PO 页面供应商/收款方 RPA 抓取
+from .po_vendor_scraper import rpa_scrape_vendor_from_po, build_po_maps
 
 
 __all__ = [
@@ -80,7 +83,11 @@ __all__ = [
     'escape_js_string',
     'wait_for_condition',
 
-    # 供应商/公司信息 RPA 抓取
+    # 供应商/公司信息 RPA 抓取（Companies 应用页面）
     'rpa_fetch_vendor_details',
     'fetch_company_details_via_rpa',
+
+    # PO 页面供应商/收款方 RPA 抓取
+    'rpa_scrape_vendor_from_po',
+    'build_po_maps',
 ]
