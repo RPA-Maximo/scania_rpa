@@ -43,27 +43,27 @@ VENDOR_FIELD_CANDIDATES = {
     'supplier_email':     ['cxpoemail', 'venemail'],
 }
 
-# Maximo MXAPIPO 收款方（Bill To）+ 内部买方字段候选名
+# Maximo MXAPIPO 收款方（Bill To）字段候选名
 #
 # 实测验证（CN5074）：
 #   ✓ billto       → 收款方代码（"BILLTOCHINA"）
 #   ✓ shipto       → 收货方代码（"0001"）
-#   ✗ billtocomp/billtoaddress1/billtocity 等 → 均不返回
-#   ✓ cxcontact    → 买方联系人（"+8618015248228 , sandy.zhang@scania.com.cn"）
-#                    格式："+86手机号 , 姓名.姓名@scania.com.cn"
+#   ✗ billtocomp/billtoaddress1/billtocity 等 → 均不返回（需 company_cache 二次填充）
 #
-# 收款方名称/地址如需填充，同样通过 POST /api/vendor-cache（以 billto 代码为键）录入。
+# 以下字段按 UI 确认不抓取：
+#   contact_person  → 不抓（联系人不从 Maximo 默认表信息获取）
+#   contact_phone   → 不抓（联系电话不从 Maximo 默认表信息获取）
+#   contact_email   → 不抓
+#   receiver        → 不抓（接收人）
+#   scania_customer_code → 不填
 BILLTO_FIELD_CANDIDATES = {
-    'company_name':         ['billtocomp', 'billtoname'],       # 不返回，留候选
-    'street_address_1':     ['billtoaddress1', 'billtoaddr1'],  # 不返回，留候选
-    'street_address_2':     ['billtoaddress2', 'billtoaddr2'],  # 不返回，留候选
-    'postal_code':          ['billtozip', 'billtopostalcode'],  # 不返回，留候选
-    'city':                 ['billtocity'],                     # 不返回，留候选
-    'country':              ['billtocountry'],                  # 不返回，留候选
-    'contact_person':       ['billtocontact', 'cxcontact'],     # cxcontact 有值：买方联系人
-    'contact_phone':        ['billtophone'],                    # 不返回，留候选
-    'contact_email':        ['billtoemail'],                    # 不返回，留候选
-    'receiver':             ['shiptoattn'],                     # 不返回，留候选
+    'company_name':         ['billtocomp', 'billtoname'],       # 不返回，由 company_cache 填充
+    'street_address_1':     ['billtoaddress1', 'billtoaddr1'],  # 不返回，由 company_cache 填充
+    'street_address_2':     ['billtoaddress2', 'billtoaddr2'],  # 不返回，由 company_cache 填充
+    'postal_code':          ['billtozip', 'billtopostalcode'],  # 不返回，由 company_cache 填充
+    'city':                 ['billtocity'],                     # 不返回，由 company_cache 填充
+    'country':              ['billtocountry'],                  # 不返回，默认"中国"
+    # contact_person/contact_phone/contact_email/receiver：UI 确认不抓取
 }
 
 # JSON 字段 -> 数据库字段映射 (订单明细)

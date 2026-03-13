@@ -135,7 +135,7 @@ def map_header_data(cursor, po_data: Dict, vendor_detail_map: Dict = None) -> Di
     result['supplier_zip']       = _first_nonempty(po_data, vc['supplier_zip']) or None
     result['supplier_city']      = _first_nonempty(po_data, vc['supplier_city']) or None
     result['supplier_state']     = _first_nonempty(po_data, vc['supplier_state']) or None
-    result['supplier_country']   = None  # MXAPIPO 不含供应商国家，由 vendor_detail_map fallback 填充
+    result['supplier_country']   = None  # 供应商国家不拉取（UI 确认不需要）
     result['supplier_contact']   = _first_nonempty(po_data, vc['supplier_contact']) or None
     result['supplier_phone']     = _safe_phone(_first_nonempty(po_data, vc['supplier_phone']))
     result['supplier_email']     = _first_nonempty(po_data, vc['supplier_email']) or None
@@ -152,11 +152,7 @@ def map_header_data(cursor, po_data: Dict, vendor_detail_map: Dict = None) -> Di
     result['postal_code']    = _first_nonempty(po_data, bc['postal_code']) or None
     result['city']           = _first_nonempty(po_data, bc['city']) or None
     result['country']        = _first_nonempty(po_data, bc['country']) or None
-    result['contact_person'] = _first_nonempty(po_data, bc['contact_person']) or None
-    result['contact_phone']  = _safe_phone(_first_nonempty(po_data, bc['contact_phone']))
-    result['contact_email']  = _first_nonempty(po_data, bc['contact_email']) or None
-    result['receiver']       = _first_nonempty(po_data, bc['receiver']) or None
-    # scania_customer_code 无对应 Maximo 字段，保持空值
+    # contact_person/contact_phone/contact_email/receiver/scania_customer_code：UI 确认不抓取，保持 NULL
 
     # ── 二次填充：从 MXAPICOMPANY 查询结果补充空字段 ─────────────────────────
     # 与 model_num/size_info 的子表修复逻辑完全一致：
@@ -166,7 +162,8 @@ def map_header_data(cursor, po_data: Dict, vendor_detail_map: Dict = None) -> Di
         vendor_code = po_data.get('vendor')
         billto_code = po_data.get('billto')
 
-        # 供应商字段 fallback
+        # 供应商字段 fallback（来自 MXAPICOMPANY 查询结果）
+        # 供应商国家不拉取（Maximo UI 供应商国家字段不参与导出）
         if vendor_code:
             vd = vendor_detail_map.get(vendor_code, {})
             if not result.get('supplier_name'):
@@ -183,8 +180,7 @@ def map_header_data(cursor, po_data: Dict, vendor_detail_map: Dict = None) -> Di
                 result['supplier_city']   = vd.get('city')
             if not result.get('supplier_state'):
                 result['supplier_state']  = vd.get('stateprovince')
-            if not result.get('supplier_country'):
-                result['supplier_country'] = vd.get('country')
+            # supplier_country 不拉取，保持 NULL
             if not result.get('supplier_contact'):
                 result['supplier_contact'] = vd.get('contact')
             if not result.get('supplier_phone'):
@@ -192,7 +188,8 @@ def map_header_data(cursor, po_data: Dict, vendor_detail_map: Dict = None) -> Di
             if not result.get('supplier_email'):
                 result['supplier_email']  = vd.get('email1')
 
-        # 收款方（billto）字段 fallback
+        # 收款方（billto）字段 fallback（来自 MXAPICOMPANY 查询结果）
+        # 联系人/联系电话/电子邮件/接收人 不从公司表填充（Maximo 默认表信息不抓）
         if billto_code:
             bd = vendor_detail_map.get(billto_code, {})
             if not result.get('company_name'):
@@ -208,12 +205,6 @@ def map_header_data(cursor, po_data: Dict, vendor_detail_map: Dict = None) -> Di
                 result['city']            = bd.get('city')
             if not result.get('country'):
                 result['country']         = bd.get('country')
-            if not result.get('contact_person'):
-                result['contact_person']  = bd.get('contact')
-            if not result.get('contact_phone'):
-                result['contact_phone']   = _safe_phone(bd.get('phone1') or '')
-            if not result.get('contact_email'):
-                result['contact_email']   = bd.get('email1')
 
     # ── 国家默认值：billto 国家为空时默认"中国" ────────────────────────────
     if not result.get('country'):

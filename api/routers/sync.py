@@ -192,12 +192,11 @@ async def export_po_excel(
                 request_date    AS `需求日期`,
                 total_cost      AS `总金额`,
                 currency        AS `币种`,
-                supplier_name     AS `供应商名称`,
                 vendor_code       AS `供应商代码`,
+                supplier_name     AS `供应商名称`,
                 supplier_address  AS `供应商地址`,
                 supplier_zip      AS `供应商邮政编码`,
                 supplier_city     AS `供应商城市`,
-                supplier_country  AS `供应商国家`,
                 supplier_contact  AS `供应商联系人`,
                 supplier_phone    AS `供应商联系电话`,
                 supplier_email    AS `供应商邮箱`,
@@ -206,10 +205,6 @@ async def export_po_excel(
                 postal_code       AS `邮政编码`,
                 city              AS `城市`,
                 country           AS `国家`,
-                contact_person    AS `收款方联系人`,
-                contact_phone     AS `收款方联系电话`,
-                contact_email     AS `收款方电子邮件`,
-                receiver          AS `接收人`,
                 create_time       AS `同步时间`
             FROM purchase_order
             WHERE del_flag = 0
