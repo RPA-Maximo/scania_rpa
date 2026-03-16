@@ -41,6 +41,22 @@ class ScrapeRequest(BaseModel):
             "不填则自动从 purchase_order 表中找 supplier_name 为空的 vendor_code。"
         ),
     )
+    po_numbers: Optional[List[str]] = Field(
+        None,
+        description=(
+            "用于 RPA 导航的 PO 单号列表（如 ['CN5123', 'CN5074']）。"
+            "提供后 RPA 会打开这些 PO 的详情页，从 Maximo UI 的 API 响应中拦截"
+            "供应商信息（PO tab）和收款方信息（收款方 tab）。"
+            "不填则仅用直接 OSLC 查询方式。"
+        ),
+    )
+    auto_find_po: bool = Field(
+        True,
+        description=(
+            "当 po_numbers 为空时，是否自动从数据库找一批 PO 号用于 RPA 导航。"
+            "默认 True。"
+        ),
+    )
 
 
 class CompanyEntry(BaseModel):
@@ -184,38 +200,50 @@ def batch_upsert_cache(entries: List[CompanyEntry]):
     return result
 
 
-@router.post("/scrape", summary="通过浏览器自动抓取公司详情到缓存")
+@router.post("/scrape", summary="通过浏览器 RPA 自动抓取公司详情到缓存")
 async def scrape_company_to_cache(request: ScrapeRequest = None):
     """
-    利用本地已登录的 Edge/Chrome debug 实例（CDP port 9223）自动从 Maximo 抓取公司详情，
-    写入 company_cache 表，下次 PO 同步时自动填充供应商/收款方字段。
+    利用本地已登录的 Edge/Chrome debug 实例（CDP port 9223），通过 RPA 方式
+    自动从 Maximo 抓取供应商/收款方详情，写入 company_cache 表。
 
-    **原理**：MXAPIVENDOR OSLC 接口对 API 账号要求 COMPANIES READ 权限，
-    而本地浏览器登录的人工账号具有该权限。通过 Playwright CDP 在浏览器上下文中
-    发起请求，可绕过 API 账号的权限限制。
+    **RPA 流程**：
+    1. 打开指定 PO 的详情页（`po_numbers` 参数）
+    2. 拦截 Maximo UI 加载 PO 时发出的内部 API 响应
+       → PO tab 中的供应商信息（名称、地址、城市、邮编等）
+    3. 点击"收款方"选项卡，触发收款方字段加载
+       → 收款方 tab 中的公司信息（公司名、地址、城市、邮编等）
+    4. 若 RPA 导航未获取完整数据，再尝试 MXAPIVENDOR 直接查询
 
     **前置条件**：
     - 本地运行 Edge/Chrome 并以 `--remote-debugging-port=9223` 启动
-    - 浏览器已登录 Maximo（人工账号需具有 COMPANIES READ 权限）
+    - 浏览器已登录 Maximo
 
-    **两种模式**：
-    - 提供 `company_codes`：抓取指定代码列表
-    - 不提供：自动检测 purchase_order 表中 supplier_name 为空的 vendor_code
+    **请求示例**：
+    ```json
+    {
+      "po_numbers": ["CN5123", "CN5074"],
+      "company_codes": ["8970301", "BILLTOCHINA"]
+    }
+    ```
+    `po_numbers` 和 `company_codes` 均可单独使用或组合使用。
+    两者均不填时，自动从数据库检测缺失数据。
     """
-    import asyncio
     from src.fetcher.company_browser_fetcher import fetch_company_details_via_browser
 
-    # 1. 确定需要抓取的代码
-    if request and request.company_codes:
-        codes = list(dict.fromkeys(request.company_codes))
+    req = request or ScrapeRequest()
+
+    # ── 1. 确定需要抓取的公司代码 ─────────────────────────────────────────
+    if req.company_codes:
+        codes = list(dict.fromkeys(req.company_codes))
     else:
-        # 自动检测：找 purchase_order 表中 supplier_name 为空的 vendor_code
+        # 自动检测：purchase_order 表中 supplier_name 为空的 vendor_code
         conn = get_connection()
         cur = conn.cursor()
         try:
             cur.execute(
                 "SELECT DISTINCT vendor_code FROM purchase_order "
-                "WHERE vendor_code IS NOT NULL AND (supplier_name IS NULL OR supplier_name = '') "
+                "WHERE vendor_code IS NOT NULL "
+                "AND (supplier_name IS NULL OR supplier_name = '') "
                 "AND del_flag = 0"
             )
             codes = [row[0] for row in cur.fetchall()]
@@ -223,11 +251,34 @@ async def scrape_company_to_cache(request: ScrapeRequest = None):
             cur.close()
             conn.close()
 
-    if not codes:
+    if not codes and not req.po_numbers:
         return {"success": True, "message": "没有需要补全的公司代码", "scraped": 0, "saved": 0}
 
-    # 2. 通过 CDP 浏览器抓取
-    scraped = await fetch_company_details_via_browser(codes)
+    # ── 2. 确定用于 RPA 导航的 PO 单号 ────────────────────────────────────
+    po_numbers = list(req.po_numbers) if req.po_numbers else []
+
+    if not po_numbers and req.auto_find_po and codes:
+        # 自动从数据库找每个 vendor_code 对应的最新 PO 号（用于 RPA 导航）
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            placeholders = ",".join(["%s"] * len(codes))
+            cur.execute(
+                f"SELECT vendor_code, MAX(code) FROM purchase_order "
+                f"WHERE vendor_code IN ({placeholders}) AND del_flag = 0 "
+                f"GROUP BY vendor_code",
+                codes,
+            )
+            po_numbers = [row[1] for row in cur.fetchall() if row[1]]
+        finally:
+            cur.close()
+            conn.close()
+
+    # ── 3. RPA 抓取 ────────────────────────────────────────────────────────
+    scraped = await fetch_company_details_via_browser(
+        company_codes=codes or [],
+        po_numbers=po_numbers or None,
+    )
 
     if not scraped:
         raise HTTPException(
@@ -235,7 +286,8 @@ async def scrape_company_to_cache(request: ScrapeRequest = None):
             detail=(
                 "浏览器抓取失败。请确认：\n"
                 "1. Edge/Chrome 已以 --remote-debugging-port=9223 启动\n"
-                "2. 浏览器已登录 Maximo 且账号具有 COMPANIES READ 权限"
+                "2. 浏览器已登录 Maximo\n"
+                "3. 提供有效的 po_numbers 以触发 RPA 导航"
             ),
         )
 
